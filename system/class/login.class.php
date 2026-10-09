@@ -10,6 +10,11 @@ define( 'LGN_DEFAULT_TYPE_TABLE' , 'user_type' );
 define( 'LGN_USE_EMAIL'          , true );
 define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 
+   //Hasher de senha (contrato + implementações). Ver docs/specs/auth-redesign-spec.md
+   require_once( __DIR__ . '/auth/passwordhasher.interface.php' );
+   require_once( __DIR__ . '/auth/legacyhasher.class.php' );
+   require_once( __DIR__ . '/auth/bcrypthasher.class.php' );
+
 //TODO - Permitir USAR ou NÃO USAR USER_TYPE
 //TODO - Permitir configurar a tabela para o USER_TYPE
 //TODO - Permitir configurar os campos da tabela
@@ -29,6 +34,7 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
          private $statusField = 'status';
          private $useCookie   = false;
          private $cookieTime  = LGN_COOKIE_EXPIRE_TIME;
+         private $hasher;     //Gojira_PasswordHasher (lazy)
          
 			/***   Construtores ***/
 			function __construct(){
@@ -123,10 +129,7 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 				$query = $this->connection->query( $sql );
 				$row   = $this->connection->fetch( $query );
 
-				//O login comum SEMPRE aplica o hash. Só pula o hash quando o chamador
-				//sinaliza explicitamente $pwd_hash (server-side). Antes, isso era inferido
-				//de strlen($pwd)==128, o que permitia pass-the-hash pelo formulário.
-				if( !$pwd_hash ) $pwd = $this->toPassword( $pwd );
+				//A verificação da senha (com migração de hash) acontece mais abaixo.
 
 				//Verifica se o usuário está ativo
 				if( $row[ 'status' ] == $this->statusList['PENDING'] ){
@@ -138,9 +141,26 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 					throw( new Exception( LGN_INATIVE, 0x9002 ) );
 				}
 				
-				//Verifica se o password está correto
-				if( $pwd !== $row[ 'pwd' ] ){
-					throw( new Exception( LGN_PASS_INVALID, 0x9003 ) );
+				//Verifica se o password está correto.
+				//$pwd_hash=true: $pwd já é o hash final (ex.: login por chave) -> compara direto.
+				//Caso contrário, valida via hasher (aceita hash moderno OU legado) e, se o hash
+				//armazenado estiver legado/desatualizado, migra de forma transparente.
+				if( $pwd_hash ){
+					if( ! hash_equals( (string)$row['pwd'], (string)$pwd ) ){
+						throw( new Exception( LGN_PASS_INVALID, 0x9003 ) );
+					}
+				} else {
+					if( ! $this->hasher()->verify( (string)$pwd, (string)$row['pwd'] ) ){
+						throw( new Exception( LGN_PASS_INVALID, 0x9003 ) );
+					}
+
+					//Migração transparente de hash legado -> moderno
+					if( $this->hasher()->needsRehash( (string)$row['pwd'] ) ){
+						$this->connection->run(
+							'UPDATE `' . $this->userTable . '` SET `password` = ? WHERE `id` = ? LIMIT 1',
+							[ $this->hasher()->hash( (string)$pwd ), $row['code'] ]
+						);
+					}
 				}
 				
 				
@@ -352,7 +372,23 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 		
 			
 			
-			//Criptografa a senha
+			//Retorna o hasher de senha (lazy). Padrão: bcrypt/argon2 com fallback legado.
+			private function hasher(){
+				if( !( $this->hasher instanceof Gojira_PasswordHasher ) ){
+					$this->hasher = new Gojira_BcryptHasher( new Gojira_LegacyHasher() );
+				}
+				return $this->hasher;
+			}
+
+			//Permite o projeto injetar um hasher próprio (ex.: argon2 com opções).
+			public function setHasher( Gojira_PasswordHasher $hasher ){
+				$this->hasher = $hasher;
+			}
+
+
+
+			//Criptografa a senha (ESQUEMA LEGADO - mantido por compatibilidade).
+			//Novos hashes devem vir de hasher()->hash(); este método será descontinuado.
 		   function toPassword( $val ){
 				
 		      $n = 3;
@@ -499,13 +535,15 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 			}
 			
 			
-			//Altera a senha do usuário
+			//Altera a senha do usuário (hash moderno + query parametrizada).
 			function changePass( $userId , $pass ){
-				
-				$cryptPass 	= $this->toPassword($pass);
-				$sql  = "UPDATE " . $this->userTable . " SET password = '" . $cryptPass . "' WHERE id = " . $userId . " LIMIT 1";
-				return ($this->connection->query($sql));
-				
+
+				$cryptPass = $this->hasher()->hash( (string)$pass );
+				return $this->connection->run(
+					'UPDATE `' . $this->userTable . '` SET `password` = ? WHERE `id` = ? LIMIT 1',
+					[ $cryptPass, $userId ]
+				);
+
          }
          
 			
