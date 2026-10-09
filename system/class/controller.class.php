@@ -1,10 +1,17 @@
 <?php
 
+      //Controle de acesso deny-by-default (opt-in). Ver docs/specs/auth-redesign-spec.md (Fase 3).
+      require_once( __DIR__ . '/auth/accesspolicy.interface.php' );
+
 		abstract class Controller extends GojiraCore{
 
 			//Propriedades da classe
 			protected $globals;
          protected $model;
+
+         //AccessPolicy global (opcional). Nula por padrão: sem registro explícito via
+         //setAccessPolicy(), o comportamento de Controller::Call não muda em nada.
+         protected static $accessPolicy;
 
 			function __construct1( $globals ){
 
@@ -70,6 +77,16 @@
 
          }
 
+			//Registra/obtém a AccessPolicy global (opt-in). Null = sem controle de acesso
+			//além do beforeCall() de cada controller (comportamento atual, inalterado).
+			static function setAccessPolicy( $policy ){
+				self::$accessPolicy = $policy;
+			}
+
+			static function getAccessPolicy(){
+				return self::$accessPolicy;
+			}
+
 			//Executa um método dentro do controller
 			static function Call( $class, $method, $param, $globals = ''){
 
@@ -81,30 +98,55 @@
             $ret           = '';
             $objController = Controller::Load( $class, $globals );
 
-            //Se o metodo existir
+            //Só considera o método se ele existir E for público. method_exists() sozinho
+            //enxerga métodos protected/private, permitindo executar via URL lógica que o
+            //controller nunca pretendeu expor (achado F05 da auditoria de segurança).
+            //Tratamos "existe mas não é público" igual a "não existe" (not_found/0x1011),
+            //para não vazar quais métodos protegidos existem.
+            $methodPublic = false;
             if( method_exists( $objController, $method ) ){
+               try{
+                  $methodPublic = (new ReflectionMethod( $objController, $method ))->isPublic();
+               } catch( ReflectionException $e ){
+                  $methodPublic = false;
+               }
+            }
+
+            if( $methodPublic ){
+
+               //Controle de acesso deny-by-default (opt-in - ver setAccessPolicy()).
+               $policy = Controller::getAccessPolicy();
+
+               if( $policy instanceof Gojira_AccessPolicy && ! $policy->isPublic( $class, $method ) && ! $policy->authorize( $class, $method, null ) ){
+
+                  if( method_exists( $objController, 'unauthorized' ) ){
+                     return call_user_func_array( array( $objController, 'unauthorized'), array( $method, $param ));
+                  }
+
+                  throw( new ControllerException( "Access denied for method <strong>\"" . $method . "\"</strong> in Controller Object <strong>\"" . $class . "\"</strong>", 0x1012 ) );
+               }
 
                //Retorna o resultado da função dentro do model
                if( $objController->beforeCall( $class, $method, $param) !== false ){
                   $ret = call_user_func_array( array( $objController, $method), array( $param ));
-                  
+
                } else {
 
                   if( method_exists( $objController, 'unauthorized' ) ){
                      $ret = call_user_func_array( array( $objController, 'unauthorized'), array( $method, $param ));
-            
+
                   } else {
                      //Execução não altorizada
                      throw( new ControllerException( "Unauthorized execution for method <strong>\"" . $method . "\"</strong> in Controller Object <strong>\"" . $class . "\"</strong>", 0x1012 ) );
-                     
+
                   }
                }
 
             } elseif( method_exists( $objController, 'not_found')  ) {
                $ret = call_user_func_array( array( $objController, 'not_found'), array( $method, $param ));
-               
+
             } else {
-               //Metodo não localizado dentro do controller
+               //Metodo não localizado dentro do controller (ou não público - ver acima)
                throw( new ControllerException( "Method <strong>\"" . $method . "\"</strong> not found in Controller Object <strong>\"" . $class . "\"</strong>", 0x1011 ) );
             }
 
