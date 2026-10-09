@@ -249,21 +249,46 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 
 
 
+			//Detecta HTTPS, para não marcar cookies como Secure numa conexão HTTP (o
+			//navegador simplesmente descartaria o cookie). Ver docs/specs/auth-redesign-spec.md (§8).
+			private function isHttps(): bool {
+				return isset( $_SERVER['HTTPS'] ) && $_SERVER['HTTPS'] !== '' && strtolower( (string)$_SERVER['HTTPS'] ) !== 'off';
+			}
+
+			//Grava um cookie de identidade com as flags de hardening recomendadas pela
+			//spec (§8): HttpOnly (JS não lê), Secure quando HTTPS, SameSite=Lax.
+			private function setIdentityCookie( string $name, $value, int $expires ){
+				setcookie( $name, $value, [
+					'expires'  => $expires,
+					'path'     => '/',
+					'secure'   => $this->isHttps(),
+					'httponly' => true,
+					'samesite' => 'Lax',
+				] );
+			}
+
 			//Grava a sessão/cookie de identidade (mesmo formato de sempre - ver
 			//isLogged()/getLogged()/logout()). Extraído de login() para ser reutilizado
 			//por loginAs() (remember-me) sem duplicar a lógica.
 			private function establishSession( array $row ){
 
             if( $this->useCookie ){
-               setcookie( $this->cookieName( $row['type'], "Logged" ) , true, time() + $this->cookieTime, '/');
-               setcookie( $this->cookieName( $row['type'], "Cod" )    , $row['code'], time() + $this->cookieTime, '/');
-               setcookie( $this->cookieName( $row['type'], "Login" )  , $row['login'], time() + $this->cookieTime, '/');
-               setcookie( $this->cookieName( $row['type'], "Email" )  , $row['email'], time() + $this->cookieTime, '/');
-               setcookie( $this->cookieName( $row['type'], "Name" )   , $row['name'], time() + $this->cookieTime, '/');
-               setcookie( $this->cookieName( $row['type'], "Type" )   , $row['type'], time() + $this->cookieTime, '/');
-               setcookie( $this->cookieName( $row['type'], "TypeCod" ), $row['type_cod'], time() + $this->cookieTime, '/');
+               $exp = time() + $this->cookieTime;
+
+               $this->setIdentityCookie( $this->cookieName( $row['type'], "Logged" ) , true            , $exp );
+               $this->setIdentityCookie( $this->cookieName( $row['type'], "Cod" )    , $row['code']    , $exp );
+               $this->setIdentityCookie( $this->cookieName( $row['type'], "Login" )  , $row['login']   , $exp );
+               $this->setIdentityCookie( $this->cookieName( $row['type'], "Email" )  , $row['email']   , $exp );
+               $this->setIdentityCookie( $this->cookieName( $row['type'], "Name" )   , $row['name']    , $exp );
+               $this->setIdentityCookie( $this->cookieName( $row['type'], "Type" )   , $row['type']    , $exp );
+               $this->setIdentityCookie( $this->cookieName( $row['type'], "TypeCod" ), $row['type_cod'], $exp );
 
             } else {
+
+               //Previne session fixation: troca o id da sessão ao autenticar, mantendo
+               //os dados. Ver docs/specs/auth-redesign-spec.md (§8).
+               if( session_status() === PHP_SESSION_ACTIVE ) session_regenerate_id( true );
+
                $_SESSION[ $row['type'] . "Logged"]  = true;
                $_SESSION[ $row['type'] . "Cod"]     = $row['code'];
                $_SESSION[ $row['type'] . "Login"]   = $row['login'];
@@ -291,16 +316,20 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 					foreach( $type as $a ){
 						
                   if( $this->useCookie ){
-                     
+
+                     //Limpa com o MESMO path usado ao gravar ('/' - ver establishSession()).
+                     //Sem isso o navegador pode não reconhecer como o mesmo cookie e não apagar.
+                     $clear = ['expires' => time() - 3600, 'path' => '/', 'httponly' => true, 'samesite' => 'Lax'];
+
                      foreach( $fields as $fld ){
-                        setcookie($this->cookieName( $a, $fld ), 0, 2);
+                        setcookie( $this->cookieName( $a, $fld ), '', $clear );
                         unset( $_COOKIE[ $this->cookieName( $a, $fld ) ] );
                      }
-                     
+
                      //Para os sistemas que criam outras váriaveis de sessão para o usuário e não limpão manualmente no logoff
                      foreach( $_COOKIE as $i => $v ){
                         if( substr( $i, 0, strlen( $a ) ) === strtolower($a) ){
-                           setcookie($i, 0, -60, '/');
+                           setcookie( $i, '', $clear );
                            unset($_COOKIE[ $i ]);
                         }
                      }
@@ -315,18 +344,21 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
                      }
                   }
 					}
-					
+
+					//Previne reuso do id de sessão após logout. Ver docs/specs/auth-redesign-spec.md (§8).
+					if( session_status() === PHP_SESSION_ACTIVE ) session_regenerate_id( true );
+
 				} else {
-					
+
 					return false;
-					
+
 				}
-				
+
 				return false;
-				
+
 			}
-			
-			
+
+
 			//Busca qual o tipo de usuário logado.
 			//Retorno pode ser 1 = SHORTCODE, 2 - ID, 3 - NAME
 			function loggedType( $type, $return = 1 ){
