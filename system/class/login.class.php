@@ -18,6 +18,9 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
    require_once( __DIR__ . '/auth/userprovider.interface.php' );
    require_once( __DIR__ . '/auth/tableuserprovider.class.php' );
    require_once( __DIR__ . '/auth/guard.interface.php' );
+   require_once( __DIR__ . '/auth/remembertokenstore.interface.php' );
+   require_once( __DIR__ . '/auth/remembertokenrecord.class.php' );
+   require_once( __DIR__ . '/auth/tableremembertokenstore.class.php' );
    require_once( __DIR__ . '/auth/sessionguard.class.php' );
 
 //TODO - Permitir USAR ou NÃO USAR USER_TYPE
@@ -125,8 +128,10 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 			}
 
 			//Fachada simplificada para um papel/silo de sessão. Ver docs/specs/auth-redesign-spec.md (§3.6).
-			public function guard( string $sessionType ): Gojira_Guard {
-				return new Gojira_SessionGuard( $this, $sessionType );
+			//$rememberStore é opcional (Fase 4 - remember-me); sem ele, Guard::attempt()
+			//com $remember=true vira no-op e loginByRemember() sempre retorna null.
+			public function guard( string $sessionType, $rememberStore = null, string $rememberCookie = '', int $rememberTtl = 2592000 ): Gojira_Guard {
+				return new Gojira_SessionGuard( $this, $sessionType, $rememberStore, $rememberCookie, $rememberTtl );
 			}
 			
 			
@@ -184,9 +189,38 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 					}
 				}
 
-				//Reconstrói o array $row no formato legado para não tocar no bloco de
-				//sessão/cookie abaixo (mantém 100% do comportamento existente).
-				$row = [
+				$row = $this->userToRow( $user );
+				$this->establishSession( $row );
+
+				return $row['code'];
+
+			}
+
+
+
+			//Abre a sessão para um usuário JÁ AUTENTICADO por outro meio (ex.: token de
+			//remember-me verificado pelo Gojira_SessionGuard). Não verifica senha - quem
+			//chama é responsável por já ter validado a identidade. Ainda assim, confirma
+			//isActive() (uma conta desativada depois do cookie ter sido emitido não deve
+			//conseguir abrir sessão). Ver docs/specs/auth-redesign-spec.md (Fase 4).
+			public function loginAs( Gojira_Authenticatable $user ){
+
+				if( ! $user->isActive() ){
+					throw( new Gojira_AuthException( LGN_INATIVE, 0x9002, Gojira_AuthException::INACTIVE ) );
+				}
+
+				$row = $this->userToRow( $user );
+				$this->establishSession( $row );
+
+				return $row['code'];
+			}
+
+
+
+			//Reconstrói o array $row no formato legado a partir do Authenticatable.
+			private function userToRow( Gojira_Authenticatable $user ): array {
+
+				return [
 					'type'     => $user->getRoles()[0] ?? '',
 					'type_cod' => $user->getAuthType(),
 					'code'     => $user->getAuthId(),
@@ -194,9 +228,15 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 					'email'    => $user->getAuthEmail(),
 					'name'     => method_exists( $user, 'getName' ) ? $user->getName() : '',
 				];
-				
-				
-				//Salva a sessão
+			}
+
+
+
+			//Grava a sessão/cookie de identidade (mesmo formato de sempre - ver
+			//isLogged()/getLogged()/logout()). Extraído de login() para ser reutilizado
+			//por loginAs() (remember-me) sem duplicar a lógica.
+			private function establishSession( array $row ){
+
             if( $this->useCookie ){
                setcookie( strtolower($row['type']) . "Logged" , true, time() + $this->cookieTime, '/');
                setcookie( strtolower($row['type']) . "Cod"    , $row['code'], time() + $this->cookieTime, '/');
@@ -215,9 +255,6 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
                $_SESSION[ $row['type'] . "Type"]    = $row['type'];
                $_SESSION[ $row['type'] . "TypeCod"] = $row['type_cod'];
 				}
-            
-				return $row['code'];
-				
 			}
 			
 			
