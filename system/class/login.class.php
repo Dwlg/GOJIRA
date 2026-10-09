@@ -22,10 +22,15 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 //bcrypt passa a ser o padrão.
 if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 
-   //Hasher de senha (contrato + implementações). Ver docs/specs/auth-redesign-spec.md
+   //Hasher de senha + contratos de usuário/guard. Ver docs/specs/auth-redesign-spec.md
    require_once( __DIR__ . '/auth/passwordhasher.interface.php' );
    require_once( __DIR__ . '/auth/legacyhasher.class.php' );
    require_once( __DIR__ . '/auth/bcrypthasher.class.php' );
+   require_once( __DIR__ . '/auth/authexception.class.php' );
+   require_once( __DIR__ . '/auth/userprovider.interface.php' );
+   require_once( __DIR__ . '/auth/tableuserprovider.class.php' );
+   require_once( __DIR__ . '/auth/guard.interface.php' );
+   require_once( __DIR__ . '/auth/sessionguard.class.php' );
 
 //TODO - Permitir USAR ou NÃO USAR USER_TYPE
 //TODO - Permitir configurar a tabela para o USER_TYPE
@@ -49,6 +54,8 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
          private $hasher;     //Gojira_PasswordHasher de verificação (lazy)
          private $hasherInjected = false;   //true quando veio de setHasher
          private $rehash      = LGN_PASSWORD_REHASH;
+         private $userProviderObj;    //Gojira_UserProvider (lazy)
+         private $userProviderCustom = false;  //true quando o projeto injetou um provider próprio
          
 			/***   Construtores ***/
 			function __construct(){
@@ -99,8 +106,41 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 
             $this->cookieTime = (is_numeric( $cookieTime ) ? $cookieTime : $this->cookieTime);
 
+            //Descarta o provider padrão (lazy) para ele reconstruir com as novas tabelas.
+            //Um provider injetado via setUserProvider() é preservado.
+            if( !$this->userProviderCustom ) $this->userProviderObj = null;
+
             $this->configured = true;
 
+			}
+
+
+
+			//Retorna o UserProvider ativo (lazy: cria o padrão na 1ª chamada).
+			private function userProvider(): Gojira_UserProvider {
+
+				if( !( $this->userProviderObj instanceof Gojira_UserProvider ) ){
+					$this->userProviderObj = new Gojira_TableUserProvider( $this->connection, $this->userTable, $this->typeTable, $this->useEmail );
+				}
+
+				return $this->userProviderObj;
+			}
+
+			//Expõe o provider ativo (usado pelo Gojira_SessionGuard e por quem quiser inspecioná-lo).
+			public function getUserProvider(): Gojira_UserProvider {
+				return $this->userProvider();
+			}
+
+			//Permite o projeto trocar como os usuários são localizados, sem tocar no core.
+			//Ver docs/specs/auth-redesign-spec.md (§3.2).
+			public function setUserProvider( Gojira_UserProvider $provider ){
+				$this->userProviderObj    = $provider;
+				$this->userProviderCustom = true;
+			}
+
+			//Fachada simplificada para um papel/silo de sessão. Ver docs/specs/auth-redesign-spec.md (§3.6).
+			public function guard( string $sessionType ): Gojira_Guard {
+				return new Gojira_SessionGuard( $this, $sessionType );
 			}
 			
 			
@@ -112,67 +152,62 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
             
             if( !$this->configured ) $this->configure( $this->userTable, $this->typeTable);
 
-				//Valores interpolados no SQL são escapados com real_escape_string.
-				$login = $this->connection->escape( $login );
-				$type  = $this->getType( $type );
+				//Localiza o usuário via UserProvider (pluggável - ver setUserProvider()).
+				//A query real (parametrizada) fica no provider; aqui só orquestramos.
+				$types = array_filter( array_map( 'trim', explode( ',', (string)$type ) ), function( $t ){ return $t !== ''; } );
+				$user  = $this->userProvider()->findByLogin( $login, $types );
 
-				//Verifica se o usuario é valido (pelo campo login e, se useEmail, pelo campo email)
-				if( !$this->connection->exist( $this->userTable, "login", $login, "type in " . $type ) ){
-					if( !$this->useEmail || !$this->connection->exist( $this->userTable, "email", $login, "type in " . $type ) )
-								throw( new Exception( LGN_LOGIN_INVALID, 0x9001 ) );
-				}
-				
-				
-				//Monta a sentença SQL para verificar se o usuário existe
-				$sql   = 'SELECT b.shortcode AS type, ' . 
-                            'b.id AS type_cod, ' . 
-									 'a.id AS code, ' .
-				   				 'a.password AS pwd, ' .
-									 'a.login AS login, ' .
-									 'a.email AS email, ' .
-									 'a.' . $this->statusField . ' AS status, ' .
-							($this->connection->fieldExist( $this->userTable, 'name' ) ? 
-									 'a.name AS name ' : '"" AS name ') .
-                     ' FROM ' . $this->userTable . ' AS a ' . 
-                        'INNER JOIN ' . $this->typeTable . ' AS b ON a.type = b.id ' .
-										'where (a.login = "' . $login . '" ' . 
-				  ($this->useEmail ? ' or a.email = "' . $login . '"' : '') .
-				  					') and a.' . 'type in ' . $type . ' limit 1';
-				
-            
-				$query = $this->connection->query( $sql );
-				$row   = $this->connection->fetch( $query );
-
-				//A verificação da senha (com migração de hash) acontece mais abaixo.
-
-				//Verifica se o usuário está ativo
-				if( $row[ 'status' ] == $this->statusList['PENDING'] ){
-					throw( new Exception( LGN_PENDING, 0x9004 ) );
+				if( $user === null ){
+					throw( new Gojira_AuthException( LGN_LOGIN_INVALID, 0x9001, Gojira_AuthException::INVALID_USER ) );
 				}
 
-				//Verifica se o usuário está ativo
-				if( $row[ 'status' ] == $this->statusList['INACTIVE'] ){
-					throw( new Exception( LGN_INATIVE, 0x9002 ) );
+				//Verifica se o usuário está ativo. Com o provider padrão, distinguimos
+				//PENDING de INACTIVE (mensagens legadas); um provider customizado só
+				//garante isActive(), e nesse caso cai na mensagem genérica de inativo.
+				if( ! $user->isActive() ){
+
+					if( $this->userProvider() instanceof Gojira_TableUserProvider && method_exists( $user, 'getRawStatus' ) ){
+
+						$statusList = $this->userProvider()->getStatusList();
+						$raw        = $user->getRawStatus();
+
+						if( (string)$raw === (string)$statusList['PENDING'] ){
+							throw( new Gojira_AuthException( LGN_PENDING, 0x9004, Gojira_AuthException::PENDING ) );
+						}
+					}
+
+					throw( new Gojira_AuthException( LGN_INATIVE, 0x9002, Gojira_AuthException::INACTIVE ) );
 				}
-				
+
 				//Verifica se o password está correto.
 				//$pwd_hash=true: $pwd já é o hash final (ex.: login por chave) -> compara direto.
 				//Caso contrário, valida via hasher (aceita hash moderno OU legado) e, se o hash
 				//armazenado estiver legado/desatualizado, migra de forma transparente.
 				if( $pwd_hash ){
-					if( ! hash_equals( (string)$row['pwd'], (string)$pwd ) ){
-						throw( new Exception( LGN_PASS_INVALID, 0x9003 ) );
+					if( ! hash_equals( $user->getAuthPasswordHash(), (string)$pwd ) ){
+						throw( new Gojira_AuthException( LGN_PASS_INVALID, 0x9003, Gojira_AuthException::INVALID_PASSWORD ) );
 					}
 				} else {
-					if( ! $this->hasher()->verify( (string)$pwd, (string)$row['pwd'] ) ){
-						throw( new Exception( LGN_PASS_INVALID, 0x9003 ) );
+					if( ! $this->hasher()->verify( (string)$pwd, $user->getAuthPasswordHash() ) ){
+						throw( new Gojira_AuthException( LGN_PASS_INVALID, 0x9003, Gojira_AuthException::INVALID_PASSWORD ) );
 					}
 
 					//Migração de hash legado/desatualizado (opt-in, ver LGN_PASSWORD_REHASH)
-					if( $this->rehash && $this->hasher()->needsRehash( (string)$row['pwd'] ) ){
-						$this->rehashPassword( $row['code'], (string)$row['pwd'], (string)$pwd );
+					if( $this->rehash && $this->hasher()->needsRehash( $user->getAuthPasswordHash() ) ){
+						$this->rehashPassword( $user->getAuthId(), $user->getAuthPasswordHash(), (string)$pwd );
 					}
 				}
+
+				//Reconstrói o array $row no formato legado para não tocar no bloco de
+				//sessão/cookie abaixo (mantém 100% do comportamento existente).
+				$row = [
+					'type'     => $user->getRoles()[0] ?? '',
+					'type_cod' => $user->getAuthType(),
+					'code'     => $user->getAuthId(),
+					'login'    => $user->getAuthLogin(),
+					'email'    => $user->getAuthEmail(),
+					'name'     => method_exists( $user, 'getName' ) ? $user->getName() : '',
+				];
 				
 				
 				//Salva a sessão
@@ -574,20 +609,27 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 			}
 			
 			
-			//Verifica se o usuário existe
+			//Verifica se o usuário existe.
+			//Nota: parametrizado nesta passagem (não fazia parte do escopo original da
+			//Fase 2, mas era concatenação direta de entrada no SQL no mesmo arquivo).
+			//Comportamento preservado tal qual estava, incluindo a assimetria de coluna
+			//entre os dois ramos (type vs typecod) - não é uma decisão de design nova.
 			function userExists( $type , $user ){
-				
-				$type = $this->getType( $type );
-				if(is_numeric($user)){
-					$sql 	= "SELECT email AS email, id AS cod, COUNT(*) AS numUser FROM " . $this->userTable . " WHERE id = '" . $user . "' AND type in " . $type;
-				}else{
-					$sql 	= "SELECT email AS email, id AS cod, COUNT(*) AS numUser FROM " . $this->userTable . " WHERE (login = '" . $user . "' OR email = '" . $user . "') AND typecod IN " . $type;
+
+				$type = $this->getType( $type );  // mantém o fragmento SQL já escapado (ver getType)
+
+				if( is_numeric( $user ) ){
+					$sql = 'SELECT email AS email, id AS cod, COUNT(*) AS numUser FROM `' . $this->userTable . '` WHERE id = ? AND type in ' . $type;
+					$ret = $this->connection->runGet( $sql, [ $user ] );
+				} else {
+					$sql = 'SELECT email AS email, id AS cod, COUNT(*) AS numUser FROM `' . $this->userTable . '` WHERE (login = ? OR email = ?) AND typecod IN ' . $type;
+					$ret = $this->connection->runGet( $sql, [ $user, $user ] );
 				}
-				$ret 	= $this->connection->fetch($this->connection->query($sql));
+
 				return [	"exists" => ($ret['numUser'] ? 1 : 0),
 							"cod"		=> $ret['cod'],
 							"email" 	=> $ret['email'] ];
-				
+
 			}
 			
 			
