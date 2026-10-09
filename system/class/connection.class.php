@@ -199,6 +199,74 @@ define( 'DB_CONNECTION_INVALID_PARAMETER', 'Parametos inválidos para função %
          }
 
 
+         //Prepara um statement e vincula os parâmetros (bind). Uso interno.
+         //Os tipos são inferidos: int -> i, float -> d, demais -> s.
+         private function prepareBind( $sql, array $params ){
+
+            $this->checkConnection();
+            self::$lastCommand = $sql;
+
+            $stmt = self::$connection->prepare( $sql );
+            if( $stmt === false ){
+               throw( new Exception( DB_CONNECTION_INVALID_SQL ) );
+            }
+
+            if( !empty( $params ) ){
+               $types = '';
+               foreach( $params as $p ){
+                  if( is_int( $p ) )        $types .= 'i';
+                  elseif( is_float( $p ) )  $types .= 'd';
+                  else                      $types .= 's';
+               }
+
+               //bind_param exige referências
+               $bind = [ $types ];
+               foreach( $params as $k => $v ) $bind[] = &$params[ $k ];
+               call_user_func_array( [ $stmt, 'bind_param' ], $bind );
+            }
+
+            return $stmt;
+         }
+
+
+         //Executa um comando (INSERT/UPDATE/DELETE) com parâmetros vinculados.
+         //Retorna true/false. Nenhum valor é concatenado no SQL.
+         function run( $sql, array $params = [] ){
+
+            $stmt = $this->prepareBind( $sql, $params );
+            $ok   = $stmt->execute();
+            $stmt->close();
+
+            return $ok;
+         }
+
+
+         //Executa um SELECT com parâmetros vinculados e retorna TODAS as linhas.
+         function runAll( $sql, array $params = [], $type = MYSQLI_ASSOC ){
+
+            $stmt = $this->prepareBind( $sql, $params );
+
+            if( ! $stmt->execute() ){
+               $stmt->close();
+               throw( new Exception( DB_CONNECTION_INVALID_SQL ) );
+            }
+
+            $res  = $stmt->get_result();
+            $rows = ( $res ? $res->fetch_all( $type ) : [] );
+            $stmt->close();
+
+            return $rows;
+         }
+
+
+         //Executa um SELECT com parâmetros vinculados e retorna a PRIMEIRA linha (ou null).
+         function runGet( $sql, array $params = [], $type = MYSQLI_ASSOC ){
+
+            $rows = $this->runAll( $sql, $params, $type );
+            return isset( $rows[0] ) ? $rows[0] : null;
+         }
+
+
          //Executa um comando na base de dados
          function execute( $sql ){
             
