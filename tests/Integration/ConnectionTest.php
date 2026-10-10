@@ -73,7 +73,10 @@ final class ConnectionTest extends IntegrationTestCase
         self::assertTrue(self::$connection->exist($table, 'name', 'b'));
         self::assertFalse(self::$connection->exist($table, 'name', 'z'));
         self::assertTrue(self::$connection->exist($table, 'name', null), 'null vira IS NULL');
-        self::assertTrue(self::$connection->exist($table, 'name', 'NULL'), 'a string "NULL" também vira IS NULL');
+        self::assertFalse(self::$connection->exist($table, 'name', 'NULL'), 'a string "NULL" é comparada como texto');
+        self::$connection->execute('INSERT INTO `' . $table . '` (name, qty) VALUES ("null", 9)');
+        self::assertTrue(self::$connection->exist($table, 'name', 'null'));
+        self::assertTrue(self::$connection->exist($table, 'name', 'null', 'qty = 9'));
         self::assertTrue(self::$connection->exist($table, '', '', 'qty = 5'), 'compare é anexado como SQL');
         self::assertTrue(self::$connection->exist($table, 'name', 'a', 'qty = 1'));
         self::assertFalse(self::$connection->exist($table, 'name', 'a', 'qty = 2'));

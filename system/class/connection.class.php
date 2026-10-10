@@ -470,7 +470,7 @@ define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
 
             $sql = '';
 
-            if( !empty( $column  ) ) $sql .= '`' . str_replace( '`', '``', $column ) . '`' . ( strtolower($value ?? '') == 'null' || is_null($value) ? ' IS NULL ' : '="' . $this->escape( $value ) . '" ');
+            if( !empty( $column  ) ) $sql .= '`' . str_replace( '`', '``', $column ) . '`' . ( is_null($value) ? ' IS NULL ' : '="' . $this->escape( $value ) . '" ');
             if( !empty( $compare ) ) $sql .= (empty( $sql ) ? '' : ' AND ') . $compare;
             if( !empty( $sql     ) ) $sql = 'SELECT COUNT(*) AS a FROM `' . str_replace( '`', '``', $table ) . '` WHERE ' . $sql;
 
