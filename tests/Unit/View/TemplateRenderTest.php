@@ -134,12 +134,13 @@ final class TemplateRenderTest extends TestCase
     {
         $this->captureDeprecations();
 
-        $tpl = '[{$globals->user->name}][{$user->name}][{$env->label}][{$globals->database->password}]'
-            . '[{if isset($database)}visivel{else}oculto{/if}]';
+        $tpl = '[{$globals->user->name}][{$user->name}][{$env->label}]'
+            . '[{if isset($database) || isset($globals->database) || isset($globals->smarty)}visivel{else}oculto{/if}]'
+            . '[{if isset($globals->cfg)}visivel{else}oculto{/if}]';
         $first  = $this->render($tpl);
         $second = $this->render($tpl);
 
-        self::assertSame('[usuario][usuario][ambiente][valor-interno][oculto]', $first, 'comportamento antigo mantido');
+        self::assertSame('[usuario][usuario][ambiente][oculto][visivel]', $first, 'comportamento antigo, menos a configuração do banco');
         self::assertSame($first, $second);
         self::assertCount(1, $this->capturedDeprecations(), 'um aviso por requisição');
         $this->assertDeprecated('GOJIRA_TEMPLATE_GLOBALS');
@@ -159,6 +160,22 @@ final class TemplateRenderTest extends TestCase
 
         self::assertSame('[usuario][usuario][ambiente][oculto][oculto][oculto]', $out, 'banco e Smarty nunca entram');
         self::assertSame([], $this->capturedDeprecations(), 'com allowlist não há aviso');
+    }
+
+    public function testAllowlistKeepsKeysThatOnlyContainAHiddenWord(): void
+    {
+        $this->captureDeprecations();
+        \Engine::setTemplateGlobals(['feedback']);
+
+        $smarty = new \Smarty\Smarty();
+        $smarty->setCompileDir($this->root . '/compile/');
+        $globals              = new \stdClass();
+        $globals->environment = new \stdClass();
+        $globals->feedback    = 'ok';
+        $globals->database    = 'interno';
+        \Engine::assignTemplateVars($smarty, 'c', 'p', [], null, $globals);
+
+        self::assertSame('[ok][ok][oculto]', $smarty->fetch('string:[{$feedback}][{$globals->feedback}][{if isset($globals->database)}visivel{else}oculto{/if}]'));
     }
 
     public function testAllowlistFromConstantAcceptsCommaSeparatedList(): void

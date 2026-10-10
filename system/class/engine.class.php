@@ -2,8 +2,12 @@
 
    class Engine extends GojiraCore{
 
-      //Chaves de $globals que nunca chegam ao template, com ou sem allowlist
+      //Variáveis soltas que o template nunca recebe (filtro antigo, por trecho do nome)
       const TEMPLATE_HIDDEN_GLOBALS = '/db|database|conn|connection|smarty/i';
+
+      //Chaves que nunca entram em {$globals}: configuração do banco (com a senha),
+      //conexão e o próprio Smarty. Valem com e sem allowlist.
+      const TEMPLATE_HIDDEN_KEYS = [ 'db', 'database', 'conn', 'connection', 'smarty' ];
 
       //Allowlist definida por Engine::setTemplateGlobals(); null segue a constante
       private static $templateGlobals = null;
@@ -48,9 +52,11 @@
       }
 
 
-      //Passa as variáveis para o template. Sem allowlist, mantém o comportamento
-      //antigo: 'globals' é o objeto inteiro e cada chave (menos banco e Smarty) vira
-      //variável. Com allowlist, 'globals' é uma cópia só com as chaves permitidas.
+      //Passa as variáveis para o template. 'globals' é sempre uma cópia rasa de
+      //$globals sem banco, conexão e Smarty. Sem allowlist (modo antigo, obsoleto),
+      //a cópia tem as demais chaves e cada uma vira variável, como antes. Com
+      //allowlist, só as chaves listadas. 'env' (environment, com caminhos absolutos
+      //do servidor) continua sendo passado nos dois modos.
       static function assignTemplateVars( $smarty, $class, $proc, $param, $objData, $globals ){
 
          $allow = self::templateGlobals();
@@ -60,22 +66,18 @@
          $smarty->assign( 'param'      , $param );
          $smarty->assign( 'objData'    , $objData );
 
-         if( $allow === null ){
-            $smarty->assign( 'globals' , $globals );
-         } else {
-            $visible = new StdClass();
-            foreach( $allow as $index ){
-               if( isset( $globals->$index ) && !preg_match( self::TEMPLATE_HIDDEN_GLOBALS, $index ) ){
-                  $visible->$index = $globals->$index;
-               }
+         $visible = new StdClass();
+         foreach( $globals as $index => $obj ){
+            if( !in_array( (string)$index, self::TEMPLATE_HIDDEN_KEYS, true ) && ( $allow === null || in_array( (string)$index, $allow, true ) ) ){
+               $visible->$index = $obj;
             }
-            $smarty->assign( 'globals' , $visible );
          }
+         $smarty->assign( 'globals' , $visible );
 
          $smarty->assign( 'env'        , $globals->environment );
 
          foreach( $globals as $index => $obj ){
-            if( !preg_match( self::TEMPLATE_HIDDEN_GLOBALS, $index ) && ( $allow === null || in_array( $index, $allow, true ) ) ){
+            if( $allow === null ? !preg_match( self::TEMPLATE_HIDDEN_GLOBALS, $index ) : ( in_array( (string)$index, $allow, true ) && !in_array( (string)$index, self::TEMPLATE_HIDDEN_KEYS, true ) ) ){
                $smarty->assign( $index, $globals->$index );
             }
          }
