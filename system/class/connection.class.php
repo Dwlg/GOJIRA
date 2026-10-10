@@ -96,11 +96,21 @@ define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
                exit();
             }
             
-            $connection = new mysqli(self::$dbHost, self::$dbUser, self::$dbPassword, self::$database );
+            //O erro do mysqli traz host e usuário: vai só para o log. A exceção leva
+            //o código numérico. No PHP 8.1+ o mysqli lança mysqli_sql_exception, que
+            //não é encadeada para o detalhe não reaparecer na saída de erro.
+            try {
+               //@: no PHP 8.0 o aviso do mysqli também traz usuário e host (vai para o log abaixo)
+               $connection = @new mysqli(self::$dbHost, self::$dbUser, self::$dbPassword, self::$database );
+            } catch( mysqli_sql_exception $e ){
+               error_log( '[GOJIRA] Connection::connect falhou (' . $e->getCode() . '): ' . $e->getMessage() );
+               throw(new Exception( sprintf(DB_CONNECTION_ERROR, 'código ' . $e->getCode() . ', detalhes no log do servidor') ) );
+            }
             
             //Verifica se conectou corretamente
             if(mysqli_connect_errno()){
-               throw(new Exception( sprintf(DB_CONNECTION_ERROR, mysqli_connect_error()) ) );
+               error_log( '[GOJIRA] Connection::connect falhou (' . mysqli_connect_errno() . '): ' . mysqli_connect_error() );
+               throw(new Exception( sprintf(DB_CONNECTION_ERROR, 'código ' . mysqli_connect_errno() . ', detalhes no log do servidor') ) );
                exit();
             }
             

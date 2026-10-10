@@ -610,7 +610,10 @@ abstract class Model extends Connection{
 			} else {
 				
 				//Se der erro na hora de salvar, joga um erro para o nivel de cima
-				throw( new ModelException( "Error while saving - " . $sql, 0x2015 ) );
+				//O SQL (com os valores) não vai na mensagem nem no log; o log leva a tabela
+				//e, quando a conexão o guardou, o erro do banco.
+				error_log( '[GOJIRA] Model::saveRow falhou na tabela `' . $table . '`: ' . ( self::$connection instanceof mysqli ? self::$connection->errno . ' ' . self::$connection->error : '' ) );
+				throw( new ModelException( "Error while saving", 0x2015 ) );
 				
 			}
 		}
