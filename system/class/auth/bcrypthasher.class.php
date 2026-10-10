@@ -4,6 +4,13 @@
    Usa password_hash()/password_verify() (bcrypt por padrão, ou argon2 se configurado).
    Aceita um hasher legado opcional para validar e migrar senhas antigas de forma
    transparente. Ver docs/specs/auth-redesign-spec.md (§3.3).
+
+   Limite do bcrypt: só os primeiros 72 bytes da senha entram no hash. Duas
+   senhas que coincidem nesses 72 bytes (em UTF-8, um caractere acentuado ocupa
+   2 bytes) produzem o mesmo resultado, e o resto é ignorado sem erro. Quem
+   precisar aceitar senhas maiores pode injetar um hasher argon2
+   (PASSWORD_ARGON2ID), que não tem esse limite, ou limitar o tamanho da senha
+   no cadastro.
 */
 
    require_once( __DIR__ . '/passwordhasher.interface.php' );

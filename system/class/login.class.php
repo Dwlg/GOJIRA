@@ -59,6 +59,7 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
          private $rehash      = LGN_PASSWORD_REHASH;
          private $userProviderObj;    //Gojira_UserProvider (lazy)
          private $userProviderCustom = false;  //true quando o projeto injetou um provider próprio
+         private static $cookieModeWarned = false;  //aviso de setCookie(true) uma vez por requisição
          
 			/***   Construtores ***/
 			function __construct(){
@@ -258,13 +259,27 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 			//Grava um cookie de identidade com as flags de hardening recomendadas pela
 			//spec (§8): HttpOnly (JS não lê), Secure quando HTTPS, SameSite=Lax.
 			private function setIdentityCookie( string $name, $value, int $expires ){
-				setcookie( $name, $value, [
+				$this->sendCookie( $name, (string)$value, [
 					'expires'  => $expires,
 					'path'     => '/',
 					'secure'   => $this->isHttps(),
 					'httponly' => true,
 					'samesite' => 'Lax',
 				] );
+			}
+
+			//Único ponto que envia cookies de identidade (subclasses podem trocar,
+			//por exemplo para testes).
+			protected function sendCookie( string $name, string $value, array $options ): bool {
+				return setcookie( $name, $value, $options );
+			}
+
+			//Troca o id da sessão mantendo os dados (session fixation). Só age com a
+			//sessão ativa e antes de qualquer saída: depois dela o PHP não consegue
+			//enviar o cookie novo e o id não deve mudar.
+			protected function regenerateSession(): bool {
+				if( session_status() !== PHP_SESSION_ACTIVE || headers_sent() ) return false;
+				return session_regenerate_id( true );
 			}
 
 			//Grava a sessão/cookie de identidade (mesmo formato de sempre - ver
@@ -287,7 +302,7 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 
                //Previne session fixation: troca o id da sessão ao autenticar, mantendo
                //os dados. Ver docs/specs/auth-redesign-spec.md (§8).
-               if( session_status() === PHP_SESSION_ACTIVE ) session_regenerate_id( true );
+               $this->regenerateSession();
 
                $_SESSION[ $row['type'] . "Logged"]  = true;
                $_SESSION[ $row['type'] . "Cod"]     = $row['code'];
@@ -319,17 +334,17 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 
                      //Limpa com o MESMO path usado ao gravar ('/' - ver establishSession()).
                      //Sem isso o navegador pode não reconhecer como o mesmo cookie e não apagar.
-                     $clear = ['expires' => time() - 3600, 'path' => '/', 'httponly' => true, 'samesite' => 'Lax'];
+                     $clear = ['expires' => time() - 3600, 'path' => '/', 'secure' => $this->isHttps(), 'httponly' => true, 'samesite' => 'Lax'];
 
                      foreach( $fields as $fld ){
-                        setcookie( $this->cookieName( $a, $fld ), '', $clear );
+                        $this->sendCookie( $this->cookieName( $a, $fld ), '', $clear );
                         unset( $_COOKIE[ $this->cookieName( $a, $fld ) ] );
                      }
 
                      //Para os sistemas que criam outras váriaveis de sessão para o usuário e não limpão manualmente no logoff
                      foreach( $_COOKIE as $i => $v ){
                         if( substr( $i, 0, strlen( $a ) ) === strtolower($a) ){
-                           setcookie( $i, '', $clear );
+                           $this->sendCookie( $i, '', $clear );
                            unset($_COOKIE[ $i ]);
                         }
                      }
@@ -346,7 +361,7 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 					}
 
 					//Previne reuso do id de sessão após logout. Ver docs/specs/auth-redesign-spec.md (§8).
-					if( session_status() === PHP_SESSION_ACTIVE ) session_regenerate_id( true );
+					$this->regenerateSession();
 
 				} else {
 
@@ -455,10 +470,7 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
                         !empty( $_COOKIE[ $this->cookieName( $a, 'Login' ) ] ) &&
                         !empty( $_COOKIE[ $this->cookieName( $a, 'Email' ) ] ) ){
 
-                        $typeCod = $this->getType( $a );
-                        $cod     = $this->connection->escape( $_COOKIE[ $this->cookieName( $a, 'Cod' ) ] );
-
-                        if( $this->connection->exist( $this->userTable, 'id', $cod, "type IN " . $typeCod . ' AND ' . $this->statusField . '=' . $this->statusList['ACTIVE'] ) ){
+                        if( $this->cookieUserIsActive( $a, (string)$_COOKIE[ $this->cookieName( $a, 'Cod' ) ] ) ){
                            $n++;
                         }
                      }
@@ -490,6 +502,27 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 		
 			
 			
+			//Confere o id gravado no cookie de identidade: o usuário precisa existir, ser
+			//do tipo e estar ativo, e o id do banco precisa ser igual ao do cookie. A
+			//comparação exata evita que o MySQL converta "1x" ou "01" no id 1.
+			private function cookieUserIsActive( $type, $cod ){
+
+				if( $cod === '' || strlen( $cod ) > 64 ) return false;
+
+				$typeCod = $this->getType( $type );
+				if( $typeCod === '()' ) return false;   //tipo inexistente
+
+				$row = $this->connection->runGet(
+					'SELECT id FROM `' . $this->userTable . '` WHERE id = ? AND type IN ' . $typeCod .
+					' AND `' . $this->statusField . '` = ? LIMIT 1',
+					[ $cod, $this->statusList['ACTIVE'] ]
+				);
+
+				return $row !== null && (string)$row['id'] === $cod;
+			}
+
+
+
 			//Hasher de verificação (lazy). Padrão: bcrypt com fallback legado, que
 			//aceita os dois formatos independentemente de LGN_PASSWORD_REHASH.
 			private function hasher(){
@@ -571,7 +604,8 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 			
 			
 			
-			//Gera uma senha aleatória com letras maiusculas, minusculas, numeros e caracteres especiais
+			//Gera uma senha aleatória com letras maiusculas, minusculas, numeros e caracteres especiais.
+			//Usa random_int (gerador criptográfico), adequado para senha temporária.
 		   function getPassword( $n ){
 		
 		      $pwd     = '';
@@ -602,7 +636,7 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 				
 		      //Define a ordem que cada parte da senha vira
 		      while( strlen( $order ) < 4 ){
-		         $c = rand( 1, 4 );
+		         $c = random_int( 1, 4 );
 		         if( strpos( '  ' . $order, $c . '' ) <= 0 ) $order .= $c;
 		      }
 		
@@ -611,25 +645,25 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 		         switch( substr( $order, $i, 1 ) ){
 		            case '1': 	//Numeros
 		               for( $c = 0; $c < $nu ; $c++ ){
-		                  $pwd .= chr(rand( 48, 57 ));
+		                  $pwd .= chr(random_int( 48, 57 ));
 		               }
 		               break;
 		
 		            case '2':	//Caracteres minusculos
 		               for( $c = 0; $c < $mi ; $c++ ){
-		                  $pwd .= chr(rand( 97, 122 ));
+		                  $pwd .= chr(random_int( 97, 122 ));
 		               }
 		               break;
 		
 		            case '3':	//Caracteres maiusculos
 		               for( $c = 0; $c < $ma ; $c++ ){
-		                  $pwd .= chr(rand( 65, 90 ));
+		                  $pwd .= chr(random_int( 65, 90 ));
 		               }
 		               break;
 		
 		            case '4':	//Caracteres especiais
 		               for( $c = 0; $c < $es ; $c++ ){
-		                  $pwd .= substr( $special, rand( 0, mb_strlen( $special, 'UTF-8' )-1 ), 1 );
+		                  $pwd .= substr( $special, random_int( 0, strlen( $special )-1 ), 1 );
 		               }
 		               break;
 		         }
@@ -723,9 +757,17 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
          
 			
          //Seta a propriedade useCookie
+         //O modo cookie guarda a identidade em cookies sem assinatura: quem conhece
+         //o id de um usuário ativo consegue montar os cookies. Fica desligado por
+         //padrão; para "lembrar de mim", use o remember-me do Gojira_SessionGuard.
          function setCookie( $val, $cookieTime = ''){
             //Forçar valor lógico
             $this->useCookie  = ($val == true ? true : false);
+
+            if( $this->useCookie && !self::$cookieModeWarned ){
+               self::$cookieModeWarned = true;
+               trigger_error( 'Login::setCookie(true) está obsoleto: os cookies de identidade não são assinados. Use Login::guard() com um Gojira_RememberTokenStore (remember-me).', E_USER_DEPRECATED );
+            }
 
             if( is_numeric( $cookieTime ) )  $this->cookieTime = $cookieTime;
          }
