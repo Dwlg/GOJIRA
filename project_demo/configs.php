@@ -1,7 +1,13 @@
 <?php
 
 define('SYSDIR_NAME', '../system/');
-require_once('constants.php');
+
+//.env opcional (fora do git e fora do webroot). Sem o arquivo, valem os defaults do constants.php.
+//Variáveis já definidas no ambiente do servidor têm precedência sobre o .env.
+require_once( __DIR__ . '/' . SYSDIR_NAME . 'class/env.class.php' );
+Gojira_Env::load( __DIR__ . '/.env' );
+
+require_once( __DIR__ . '/constants.php' );
 
    @session_start();
 

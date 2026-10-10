@@ -9,22 +9,25 @@ CONFIGURAÇÕES PARA VERSÕES FUTURAS
 define('PROJECT_ID' , 'PROJDEMO');
 define('PROJECT_NAME', 'Project Demo');
 define('VERSION', '0.0.1');
-define('ENVIRONMENT', 'DEV');
+
+//Valores lidos do ambiente (ou do .env, ver .env.example); o segundo argumento é o fallback.
+//Fora de DEV, DB_USER e DB_PWD com valor de exemplo impedem o boot (system/init.php).
+define('ENVIRONMENT', Gojira_Env::get('ENVIRONMENT', 'DEV'));
 
 //BASE DE DADOS
-define('DB_NAME', 'db_name');
-define('DB_HOST', 'localhost');
-define('DB_USER', 'db_user');
-define('DB_PWD', 'db_host');
+define('DB_NAME', Gojira_Env::get('DB_NAME', 'db_name'));
+define('DB_HOST', Gojira_Env::get('DB_HOST', 'localhost'));
+define('DB_USER', Gojira_Env::get('DB_USER', 'db_user'));
+define('DB_PWD',  Gojira_Env::get('DB_PWD', 'db_host'));
 
 //ENVIO DE EMAIL
-define('SMTP_HOST', '');
-define('SMTP_PORT', '');
-define('SMTP_SECURE', '');
-define('SMTP_USER', '');
-define('SMTP_PASSWORD', '');
-define('SMTP_FROM', '');
-define('SMTP_NAME', '');
+define('SMTP_HOST',     Gojira_Env::get('SMTP_HOST', ''));
+define('SMTP_PORT',     Gojira_Env::get('SMTP_PORT', ''));
+define('SMTP_SECURE',   Gojira_Env::get('SMTP_SECURE', ''));
+define('SMTP_USER',     Gojira_Env::get('SMTP_USER', ''));
+define('SMTP_PASSWORD', Gojira_Env::get('SMTP_PASSWORD', ''));
+define('SMTP_FROM',     Gojira_Env::get('SMTP_FROM', ''));
+define('SMTP_NAME',     Gojira_Env::get('SMTP_NAME', ''));
 
 // define('RECAPTCHA_KEY', '');
 // define('RECAPTCHA_SECRET', '');
