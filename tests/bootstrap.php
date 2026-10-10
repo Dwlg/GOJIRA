@@ -16,6 +16,9 @@ require_once GOJIRA_SYSTEM_PATH . 'class/gojiracore.class.php';
 require_once GOJIRA_SYSTEM_PATH . 'class/tool.class.php';
 require_once GOJIRA_SYSTEM_PATH . 'class/connection.class.php';
 require_once GOJIRA_SYSTEM_PATH . 'class/model.class.php';
+require_once GOJIRA_SYSTEM_PATH . 'class/controller.class.php';
+require_once GOJIRA_SYSTEM_PATH . 'class/component.class.php';
+require_once GOJIRA_SYSTEM_PATH . 'class/login.class.php';
 
 // routes.php só aplica as rotas quando $routes existe no escopo; aqui ele não existe.
 require_once GOJIRA_SYSTEM_PATH . 'routes.php';
