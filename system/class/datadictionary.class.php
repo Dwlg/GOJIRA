@@ -15,14 +15,44 @@
          //Construtores do objeto
          function __construct1( $connection ){
 
+            self::deprecated();
+
             $this->connection = $connection;
 
+         }
+
+
+         //DataDictionary está descontinuada e será removida na 2.0. Avisa uma vez por requisição.
+         private static function deprecated(){
+
+            static $warned = false;
+
+            if( ! $warned ){
+               $warned = true;
+               trigger_error( 'DataDictionary está descontinuada e será removida na 2.0.', E_USER_DEPRECATED );
+            }
+         }
+
+
+         //Escapa um valor para uso entre aspas. Usa Connection::escape quando existir;
+         //sem ela, aplica o mesmo mapeamento de mysqli::real_escape_string (conexão utf8).
+         private function quote( $value ){
+
+            $value = (string)( $value ?? '' );
+
+            if( method_exists( $this->connection, 'escape' ) ){
+               $value = $this->connection->escape( $value );
+            } else {
+               $value = strtr( $value, array( "\\" => "\\\\", "\0" => "\\0", "\n" => "\\n", "\r" => "\\r", "'" => "\\'", '"' => '\\"', "\x1a" => "\\Z" ) );
+            }
+
+            return "'" . $value . "'";
          }
          
          //Sincroniza as informações de uma base de dados para gerar o dicionario de dada dela
          function syncDb( $dbName ){
          
-            $sql   = 'SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = "' . $dbName . '"';
+            $sql   = 'SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ' . $this->quote( $dbName );
             $query = $this->connection->query( $sql );
             
             while( $row = $this->connection->fetch( $query ) ){
@@ -48,8 +78,8 @@
                            EXTRA,
                            COLUMN_COMMENT
                        FROM information_schema.COLUMNS 
-                           WHERE TABLE_SCHEMA = "' . $dbName . '"
-                             AND TABLE_NAME = "' . $tableName . '"';
+                           WHERE TABLE_SCHEMA = ' . $this->quote( $dbName ) . '
+                             AND TABLE_NAME = ' . $this->quote( $tableName );
             
             $query = $this->connection->query( $sql );
             
