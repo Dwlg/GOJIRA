@@ -146,13 +146,13 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 				
 				//Salva a sessão
             if( $this->useCookie ){
-               setcookie( strtolower($row['type']) . "Logged" , true, time() + $this->cookieTime, '/');
-               setcookie( strtolower($row['type']) . "Cod"    , $row['code'], time() + $this->cookieTime, '/');
-               setcookie( strtolower($row['type']) . "Login"  , $row['login'], time() + $this->cookieTime, '/');
-               setcookie( strtolower($row['type']) . "Email"  , $row['email'], time() + $this->cookieTime, '/');
-               setcookie( strtolower($row['type']) . "Name"   , $row['name'], time() + $this->cookieTime, '/');
-               setcookie( strtolower($row['type']) . "Type"   , $row['type'], time() + $this->cookieTime, '/');
-               setcookie( strtolower($row['type']) . "TypeCod", $row['type_cod'], time() + $this->cookieTime, '/');
+               setcookie( $this->cookieName( $row['type'], "Logged" ) , true, time() + $this->cookieTime, '/');
+               setcookie( $this->cookieName( $row['type'], "Cod" )    , $row['code'], time() + $this->cookieTime, '/');
+               setcookie( $this->cookieName( $row['type'], "Login" )  , $row['login'], time() + $this->cookieTime, '/');
+               setcookie( $this->cookieName( $row['type'], "Email" )  , $row['email'], time() + $this->cookieTime, '/');
+               setcookie( $this->cookieName( $row['type'], "Name" )   , $row['name'], time() + $this->cookieTime, '/');
+               setcookie( $this->cookieName( $row['type'], "Type" )   , $row['type'], time() + $this->cookieTime, '/');
+               setcookie( $this->cookieName( $row['type'], "TypeCod" ), $row['type_cod'], time() + $this->cookieTime, '/');
 
             } else {
                $_SESSION[ $row['type'] . "Logged"]  = true;
@@ -187,8 +187,8 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
                   if( $this->useCookie ){
                      
                      foreach( $fields as $fld ){
-                        setcookie(strtolower($a . $fld), 0, 2);
-                        unset( $_COOKIE[ strtolower($a . $fld)] );
+                        setcookie($this->cookieName( $a, $fld ), 0, 2);
+                        unset( $_COOKIE[ $this->cookieName( $a, $fld ) ] );
                      }
                      
                      //Para os sistemas que criam outras váriaveis de sessão para o usuário e não limpão manualmente no logoff
@@ -278,9 +278,9 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 				
 				foreach( $type as $a ){
                if( $this->useCookie ){
-                  if( isset( $_COOKIE[ strtolower( $a  . $field ) ] ) &&
-                     !empty( $_COOKIE[ strtolower( $a  . $field ) ] ) ){
-                     return $_COOKIE[ strtolower( $a  . $field )];
+                  if( isset( $_COOKIE[ $this->cookieName( $a, $field ) ] ) &&
+                     !empty( $_COOKIE[ $this->cookieName( $a, $field ) ] ) ){
+                     return $_COOKIE[ $this->cookieName( $a, $field ) ];
                   }
                } else {
                   if( isset( $_SESSION[ strtoupper( $a ) . $field ] ) &&
@@ -306,19 +306,19 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 				foreach( $type as $a ){
                if( $this->useCookie ){
                   $a = strtolower( $a );
-                  if( isset( $_COOKIE[ $a . 'logged'] ) &&
-                      isset( $_COOKIE[ $a . 'cod'] ) &&
-                      isset( $_COOKIE[ $a . 'name'] ) &&
-                      isset( $_COOKIE[ $a . 'login'] ) &&
-                      isset( $_COOKIE[ $a . 'email'] ) ){
+                  if( isset( $_COOKIE[ $this->cookieName( $a, 'Logged' ) ] ) &&
+                      isset( $_COOKIE[ $this->cookieName( $a, 'Cod' ) ] ) &&
+                      isset( $_COOKIE[ $this->cookieName( $a, 'Name' ) ] ) &&
+                      isset( $_COOKIE[ $this->cookieName( $a, 'Login' ) ] ) &&
+                      isset( $_COOKIE[ $this->cookieName( $a, 'Email' ) ] ) ){
 
-                     if( $_COOKIE[ $a . 'logged'] == true &&
-                        !empty( $_COOKIE[ $a . 'cod'] ) &&
-                        !empty( $_COOKIE[ $a . 'login'] ) &&
-                        !empty( $_COOKIE[ $a . 'email'] ) ){
+                     if( $_COOKIE[ $this->cookieName( $a, 'Logged' ) ] == true &&
+                        !empty( $_COOKIE[ $this->cookieName( $a, 'Cod' ) ] ) &&
+                        !empty( $_COOKIE[ $this->cookieName( $a, 'Login' ) ] ) &&
+                        !empty( $_COOKIE[ $this->cookieName( $a, 'Email' ) ] ) ){
 
                         $typeCod = $this->getType( $a );
-                        $cod     = $this->connection->escape( $_COOKIE[ $a . 'cod'] );
+                        $cod     = $this->connection->escape( $_COOKIE[ $this->cookieName( $a, 'Cod' ) ] );
 
                         if( $this->connection->exist( $this->userTable, 'id', $cod, "type IN " . $typeCod . ' AND ' . $this->statusField . '=' . $this->statusList['ACTIVE'] ) ){
                            $n++;
@@ -514,7 +514,14 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
             //Forçar valor lógico
             $this->useCookie  = ($val == true ? true : false);
 
-            if( is_numeric( $time ) )  $this->cookieTime = $cookieTime;
+            if( is_numeric( $cookieTime ) )  $this->cookieTime = $cookieTime;
+         }
+
+
+         //Nome do cookie de um campo do usuário logado. Gravação (login), leitura
+         //(isLogged, getLogged) e remoção (logout) usam o mesmo nome, em minúsculas.
+         function cookieName( $type, $field ){
+            return strtolower( $type . $field );
          }
 		
 		}

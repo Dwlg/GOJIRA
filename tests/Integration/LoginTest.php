@@ -25,6 +25,7 @@ final class LoginTest extends IntegrationTestCase
     protected function setUp(): void
     {
         $_SESSION = [];
+        $_COOKIE  = [];
 
         $this->typeTable = $this->createTable(
             'id INT PRIMARY KEY, shortcode VARCHAR(20) NOT NULL, name VARCHAR(50) NOT NULL'
@@ -49,6 +50,7 @@ final class LoginTest extends IntegrationTestCase
     protected function tearDown(): void
     {
         $_SESSION = [];
+        $_COOKIE  = [];
         parent::tearDown();
     }
 
@@ -164,5 +166,72 @@ final class LoginTest extends IntegrationTestCase
         self::assertSame('("1")', $this->login->getType('admin'));
         self::assertSame('("1","2")', $this->login->getType('ADM,client'));
         self::assertSame('()', $this->login->getType('admin"'));
+    }
+
+    public function testCookieNamesAreLowercase(): void
+    {
+        self::assertSame('admcod', $this->login->cookieName('ADM', 'Cod'));
+        self::assertSame('admtypecod', $this->login->cookieName('adm', 'TypeCod'));
+    }
+
+    /** @param int|string $cod */
+    private function setLoginCookies($cod): void
+    {
+        $_COOKIE = [];
+        foreach (['Logged' => '1', 'Cod' => (string) $cod, 'Name' => 'ana', 'Login' => 'ana', 'Email' => 'ana@example.test'] as $field => $value) {
+            $_COOKIE[$this->login->cookieName('ADM', $field)] = $value;
+        }
+    }
+
+    public function testCookieModeRecognizesActiveUser(): void
+    {
+        $this->login->setCookie(true);
+        $this->setLoginCookies($this->codes['ana']);
+
+        self::assertTrue($this->login->isLogged('ADM'));
+        self::assertEquals($this->codes['ana'], $this->login->getLogged('Cod', 'ADM'));
+    }
+
+    /** @return array<string, array{string}> */
+    public function tamperedCookieCodes(): array
+    {
+        return [
+            'usuário inexistente' => ['999999'],
+            'aspas duplas'        => ['"x'],
+            'aspas simples'       => ["'x"],
+            'texto'               => ['abc'],
+        ];
+    }
+
+    /** @dataProvider tamperedCookieCodes */
+    public function testCookieModeRejectsTamperedCode(string $cod): void
+    {
+        $this->login->setCookie(true);
+        $this->setLoginCookies($cod);
+
+        self::assertFalse($this->login->isLogged('ADM'));
+    }
+
+    public function testCookieModeRejectsInactiveUser(): void
+    {
+        $this->login->setCookie(true);
+        $this->setLoginCookies($this->codes['bia']);
+
+        self::assertFalse($this->login->isLogged('ADM'));
+    }
+
+    public function testCookieModeIgnoresMixedCaseNames(): void
+    {
+        $this->login->setCookie(true);
+        $_COOKIE = ['admLogged' => '1', 'admCod' => (string) $this->codes['ana'], 'admName' => 'ana', 'admLogin' => 'ana', 'admEmail' => 'ana@example.test'];
+
+        self::assertFalse($this->login->isLogged('ADM'));
+    }
+
+    public function testCookieModeIsOffByDefault(): void
+    {
+        $this->setLoginCookies($this->codes['ana']);
+
+        self::assertFalse($this->login->isLogged('ADM'));
     }
 }
