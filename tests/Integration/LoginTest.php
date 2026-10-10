@@ -309,10 +309,11 @@ final class LoginTest extends IntegrationTestCase
 
     public function testModernHashAuthenticatesWithRehashOff(): void
     {
-        $this->login->changePass($this->codes['ana'], 'segredo');
-        self::assertTrue(self::isModernHash($this->storedHash('ana')));
+        $modern = password_hash('segredo', PASSWORD_BCRYPT, ['cost' => 4]);
+        self::$connection->run('UPDATE `' . $this->userTable . '` SET password = ? WHERE id = ?', [$modern, $this->codes['ana']]);
 
         self::assertEquals($this->codes['ana'], $this->login->login('ana', 'segredo', 'admin'));
+        self::assertSame($modern, $this->storedHash('ana'));
     }
 
     public function testServerSideHashFlagWithLegacyHashAndRehashOff(): void
@@ -490,8 +491,19 @@ final class LoginTest extends IntegrationTestCase
         self::assertSame($legacy, $this->storedHash('ana'));
     }
 
-    public function testChangePassStoresModernHash(): void
+    // Gravação de senha: uma única flag decide o formato
+
+    public function testChangePassStoresLegacyHashByDefault(): void
     {
+        self::assertTrue($this->login->changePass($this->codes['ana'], "nova'senha"));
+
+        self::assertSame($this->login->toPassword("nova'senha"), $this->storedHash('ana'));
+        self::assertEquals($this->codes['ana'], $this->login->login('ana', "nova'senha", 'admin'));
+    }
+
+    public function testChangePassStoresBcryptWhenEnabled(): void
+    {
+        $this->login->setPasswordRehash(true);
         self::assertTrue($this->login->changePass($this->codes['ana'], "nova'senha"));
 
         $stored = $this->storedHash('ana');
@@ -502,8 +514,44 @@ final class LoginTest extends IntegrationTestCase
         self::assertEquals($this->codes['ana'], $this->login->login('ana', "nova'senha", 'admin'));
     }
 
-    public function testChangePassUsesInjectedHasher(): void
+    public function testHashPasswordFollowsTheFlag(): void
     {
+        self::assertSame($this->login->toPassword('x'), $this->login->hashPassword('x'));
+
+        $this->login->setPasswordRehash(true);
+        $hash = $this->login->hashPassword('x');
+        self::assertTrue(self::isModernHash($hash));
+        self::assertTrue(password_verify('x', $hash));
+    }
+
+    /**
+     * Simulação de rollback: senha trocada com a flag desligada continua
+     * entrando num Login que só conhece o esquema legado.
+     */
+    public function testPasswordChangedWithFlagOffWorksWithPureLegacyHasher(): void
+    {
+        $this->login->changePass($this->codes['ana'], 'nova');
+        $_SESSION = [];
+
+        $legacyOnly = new \Login(self::$connection, self::$globals->tools, $this->userTable, $this->typeTable);
+        $legacyOnly->setHasher(new \Gojira_LegacyHasher());
+
+        self::assertEquals($this->codes['ana'], $legacyOnly->login('ana', 'nova', 'admin'));
+    }
+
+    public function testInjectedHasherTakesPrecedenceOverFlagOff(): void
+    {
+        $this->login->setHasher(new \Gojira_BcryptHasher(new \Gojira_LegacyHasher(), PASSWORD_BCRYPT, ['cost' => 4]));
+        $this->login->changePass($this->codes['ana'], 'nova');
+
+        $stored = $this->storedHash('ana');
+        self::assertTrue(self::isModernHash($stored));
+        self::assertSame(4, password_get_info($stored)['options']['cost']);
+    }
+
+    public function testInjectedHasherTakesPrecedenceOverFlagOn(): void
+    {
+        $this->login->setPasswordRehash(true);
         $this->login->setHasher(new \Gojira_LegacyHasher());
         $this->login->changePass($this->codes['ana'], 'nova');
 
