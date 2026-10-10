@@ -1,0 +1,15 @@
+{
+   "name": "soares289/gojira-tools-phpunit",
+   "description": "PHPUnit isolado para os testes do GOJIRA. Não faz parte das dependências do framework.",
+   "type": "project",
+   "license": "OSL-3.0",
+   "require": {
+      "phpunit/phpunit": "^9.6"
+   },
+   "config": {
+      "platform": {
+         "php": "8.0.2"
+      },
+      "sort-packages": true
+   }
+}
