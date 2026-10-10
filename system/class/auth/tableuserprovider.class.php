@@ -8,6 +8,10 @@
    consultas via Connection::run/runAll/runGet (prepared statements + bind) -
    nenhum valor recebido é concatenado no SQL.
 
+   Sem a tabela de tipos, a coluna `type` do usuário guarda o próprio código do
+   tipo (ex.: 'ADM'), como o Login::getType() já assumia: os tipos pedidos são
+   comparados direto com essa coluna e ela também vira o papel do usuário.
+
    Ver docs/specs/auth-redesign-spec.md (§3.2, Fase 2).
 */
 
@@ -24,6 +28,7 @@
       private $statusField   = 'status';
       private $statusList    = [ 'PENDING' => 0, 'INACTIVE' => 1, 'ACTIVE' => 2 ];
       private $hasName       = true;
+      private $hasTypeTable  = true;
 
       function __construct( $connection, string $userTable = 'user', string $typeTable = 'user_type', bool $useEmail = true ){
 
@@ -38,7 +43,8 @@
             $this->statusList  = [ 'PENDING' => -1, 'INACTIVE' => 0, 'ACTIVE' => 1 ];
          }
 
-         $this->hasName = $this->connection->fieldExist( $userTable, 'name' );
+         $this->hasName      = $this->connection->fieldExist( $userTable, 'name' );
+         $this->hasTypeTable = (bool)$this->connection->tableExist( $typeTable );
       }
 
       //Mapa de status, usado pelo Login (adapter) para distinguir PENDING de INACTIVE.
@@ -53,6 +59,9 @@
          $values = array_values( array_filter( $values, function( $v ){ return $v !== '' && $v !== null; } ) );
          if( empty( $values ) ) return [];
 
+         //Sem tabela de tipos, o valor pedido é o próprio conteúdo da coluna type.
+         if( ! $this->hasTypeTable ) return $values;
+
          $ph  = implode( ',', array_fill( 0, count( $values ), '?' ) );
          $sql = 'SELECT id FROM `' . $this->typeTable . '` WHERE id IN (' . $ph . ') OR shortcode IN (' . $ph . ') OR name IN (' . $ph . ')';
 
@@ -64,6 +73,13 @@
       private function baseSelect(): string {
 
          $nameExpr = $this->hasName ? 'a.name AS name' : "'' AS name";
+
+         if( ! $this->hasTypeTable ){
+            return 'SELECT a.type AS role, a.type AS type_id, a.id AS id, ' .
+                   'a.`' . $this->passwordField . '` AS pwd, a.login AS login, a.email AS email, ' .
+                   'a.`' . $this->statusField . '` AS status, ' . $nameExpr . ' ' .
+                   'FROM `' . $this->userTable . '` AS a';
+         }
 
          return 'SELECT b.shortcode AS role, b.id AS type_id, a.id AS id, ' .
                 'a.`' . $this->passwordField . '` AS pwd, a.login AS login, a.email AS email, ' .
@@ -114,12 +130,24 @@
          return $this->findBy( 'a.id = ?', [ $id ], $types );
       }
 
-      public function updatePasswordHash( $id, string $newHash ): bool {
+      //Com $expectedOldHash, só grava se o hash no banco ainda for esse (outra
+      //requisição que já trocou a senha não é sobrescrita) e devolve false quando
+      //nenhuma linha mudou.
+      public function updatePasswordHash( $id, string $newHash, ?string $expectedOldHash = null ): bool {
 
-         return $this->connection->run(
-            'UPDATE `' . $this->userTable . '` SET `' . $this->passwordField . '` = ? WHERE id = ? LIMIT 1',
-            [ $newHash, $id ]
+         if( $expectedOldHash === null ){
+            return $this->connection->run(
+               'UPDATE `' . $this->userTable . '` SET `' . $this->passwordField . '` = ? WHERE id = ? LIMIT 1',
+               [ $newHash, $id ]
+            );
+         }
+
+         $this->connection->run(
+            'UPDATE `' . $this->userTable . '` SET `' . $this->passwordField . '` = ? WHERE id = ? AND `' . $this->passwordField . '` = ? LIMIT 1',
+            [ $newHash, $id, $expectedOldHash ]
          );
+
+         return $this->connection->affectedRows() === 1;
       }
 
    }

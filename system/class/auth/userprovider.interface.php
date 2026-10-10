@@ -18,7 +18,8 @@
       //Revalida identidade por id (usado em sessão/remember-me).
       public function findById( $id, array $types = [] ): ?Gojira_Authenticatable;
 
-      //Persiste um novo hash de senha (migração transparente). Retorna sucesso.
-      public function updatePasswordHash( $id, string $newHash ): bool;
+      //Persiste um novo hash de senha (migração no login). Com $expectedOldHash,
+      //só grava se o hash atual ainda for esse e devolve false se nada mudou.
+      public function updatePasswordHash( $id, string $newHash, ?string $expectedOldHash = null ): bool;
 
    }

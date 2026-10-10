@@ -158,6 +158,9 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 				$user  = $this->userProvider()->findByLogin( $login, $types );
 
 				if( $user === null ){
+					//Usuário inexistente gasta o mesmo trabalho de hash que uma senha errada,
+					//para o tempo de resposta não revelar quais logins existem.
+					if( ! $pwd_hash ) $this->spendHashTime( (string)$pwd );
 					throw( new Gojira_AuthException( LGN_LOGIN_INVALID, 0x9001, Gojira_AuthException::INVALID_USER ) );
 				}
 
@@ -455,17 +458,21 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 				$this->rehash = ( $enabled == true );
 			}
 
-			//Regrava o hash da senha do usuário com o hasher configurado.
+			//Gasta o custo de gerar um hash no formato de gravação atual (bcrypt com a
+			//flag ligada ou hasher injetado; legado, e barato, com a flag desligada).
+			//Usado quando o usuário não existe: o tempo fica parecido com o de uma
+			//verificação de senha contra um hash do mesmo formato.
+			private function spendHashTime( $plain ){
+				$this->writeHasher()->hash( $plain );
+			}
+
+			//Regrava o hash da senha do usuário com o hasher configurado, pelo UserProvider.
 			//Só grava se o hash no banco ainda for o mesmo que foi verificado: outra
 			//requisição que já trocou a senha não é sobrescrita. Uma falha aqui não
 			//impede o login (a senha já foi validada); o motivo vai para o error_log.
 			private function rehashPassword( $userId, $oldHash, $plain ){
 				try {
-					$this->connection->run(
-						'UPDATE `' . $this->userTable . '` SET `password` = ? WHERE `id` = ? AND `password` = ? LIMIT 1',
-						[ $this->hashPassword( $plain ), $userId, $oldHash ]
-					);
-					if( $this->connection->affectedRows() !== 1 ){
+					if( ! $this->userProvider()->updatePasswordHash( $userId, $this->hashPassword( $plain ), $oldHash ) ){
 						error_log( '[GOJIRA] Login: hash da senha do usuário ' . $userId . ' não regravado (alterado por outra requisição)' );
 						return false;
 					}
