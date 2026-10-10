@@ -136,7 +136,8 @@ final class LoginAdapterTest extends IntegrationTestCase
     public function testUnknownUserRunsOneVerifyLikeAnExistingUser(): void
     {
         $this->createAuthTables();
-        $this->addUser('ana', 'segredo');
+        // Hash no mesmo formato do hasher injetado (bcrypt, custo 4).
+        $this->addUser('ana', '', 1, 2, null, password_hash('segredo', PASSWORD_BCRYPT, ['cost' => 4]));
         $auth   = $this->newLogin();
         $hasher = new CountingHasher();
         $auth->setHasher($hasher);
@@ -158,6 +159,38 @@ final class LoginAdapterTest extends IntegrationTestCase
         self::assertSame(1, $existing);
         self::assertSame(3, $hasher->calls['verify'], 'cada login inexistente faz uma verificação, como o existente');
         self::assertSame($hashesAfterFirstUnknown, $hasher->calls['hash'], 'o hash fictício é gerado uma vez por processo');
+    }
+
+    public function testStoredHashInAnotherFormatAlsoRunsTheDummyVerify(): void
+    {
+        $this->createAuthTables();
+        $this->addUser('ana', 'segredo');   // legado; o hasher injetado grava bcrypt
+        $auth   = $this->newLogin();
+        $hasher = new CountingHasher();
+        $auth->setHasher($hasher);
+
+        $this->catchAuth(static function () use ($auth) {
+            $auth->login('ana', 'outra', 'ADM');
+        });
+
+        self::assertSame(2, $hasher->calls['verify'], 'hash guardado em outro formato: verificação real e fictícia');
+    }
+
+    public function testLegacyHashWithRehashOffRunsOnlyTheRealVerify(): void
+    {
+        $this->createAuthTables();
+        $this->addUser('ana', 'segredo');
+        $auth = $this->newLogin();
+
+        $check = new \ReflectionMethod(\Login::class, 'storedFormatDiffers');
+        $check->setAccessible(true);
+
+        self::assertFalse($check->invoke($auth, (new \Gojira_LegacyHasher())->hash('x')), 'legado com a flag desligada: mesmo formato');
+        self::assertTrue($check->invoke($auth, password_hash('x', PASSWORD_BCRYPT, ['cost' => 4])));
+
+        $auth->setPasswordRehash(true);
+        self::assertTrue($check->invoke($auth, (new \Gojira_LegacyHasher())->hash('x')), 'legado com a flag ligada: formato diferente');
+        self::assertFalse($check->invoke($auth, \Login::DUMMY_BCRYPT_HASH));
     }
 
     public function testFailureMessageDoesNotTellUserFromPassword(): void

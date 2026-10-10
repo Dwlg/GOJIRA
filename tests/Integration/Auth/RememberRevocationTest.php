@@ -158,14 +158,95 @@ final class RememberRevocationTest extends IntegrationTestCase
         self::assertArrayHasKey('remember_cli', $_COOKIE);
     }
 
+    /** Executa $fn capturando os E_USER_NOTICE, com o aviso de store ausente zerado. */
+    private function notices(callable $fn): array
+    {
+        $flag = new \ReflectionProperty(\Login::class, 'missingStoreNoticed');
+        $flag->setAccessible(true);
+        $flag->setValue(null, false);
+
+        $notices = [];
+        set_error_handler(static function (int $errno, string $errstr) use (&$notices): bool {
+            $notices[] = $errstr;
+
+            return true;
+        }, E_USER_NOTICE);
+        try {
+            $fn();
+        } finally {
+            restore_error_handler();
+        }
+
+        return $notices;
+    }
+
     public function testLogoutWithoutStoreDoesNotTouchRememberCookie(): void
     {
         $_COOKIE['remember_adm'] = 'a:b';
 
-        $this->auth->logout('ADM');
+        $this->notices(function () {
+            $this->auth->logout('ADM');
+        });
 
         self::assertSame('a:b', $_COOKIE['remember_adm']);
         self::assertSame([], $this->auth->cookies);
+    }
+
+    public function testLogoutWithRememberCookieButNoStoreNoticesOnce(): void
+    {
+        $_COOKIE['remember_adm'] = 'a:b';
+
+        $notices = $this->notices(function () {
+            $this->auth->logout('ADM');
+            $this->auth->logout('ADM');
+        });
+
+        self::assertCount(1, $notices);
+        self::assertStringContainsString('Login::logout()', $notices[0]);
+        self::assertStringContainsString('setRememberTokenStore', $notices[0]);
+    }
+
+    public function testLogoutWithoutRememberCookieDoesNotNotice(): void
+    {
+        $notices = $this->notices(function () {
+            $this->auth->logout('ADM');
+        });
+
+        self::assertSame([], $notices);
+    }
+
+    public function testChangePassWithRememberCookieButNoStoreNotices(): void
+    {
+        $_COOKIE['remember_cli'] = 'a:b';
+
+        $notices = $this->notices(function () {
+            $this->auth->changePass($this->ids['ana'], 'senha-nova');
+        });
+
+        self::assertCount(1, $notices);
+        self::assertStringContainsString('Login::changePass()', $notices[0]);
+    }
+
+    public function testChangePassWithoutRememberCookieDoesNotNotice(): void
+    {
+        $notices = $this->notices(function () {
+            $this->auth->changePass($this->ids['ana'], 'senha-nova');
+        });
+
+        self::assertSame([], $notices);
+    }
+
+    public function testNoNoticeWhenTheStoreIsRegistered(): void
+    {
+        $this->auth->setRememberTokenStore($this->store);
+        $_COOKIE['remember_adm'] = 'a:b';
+
+        $notices = $this->notices(function () {
+            $this->auth->logout('ADM');
+            $this->auth->changePass($this->ids['ana'], 'senha-nova');
+        });
+
+        self::assertSame([], $notices);
     }
 
     public function testStolenTokenStopsWorkingAfterPasswordChange(): void

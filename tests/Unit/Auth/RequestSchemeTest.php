@@ -97,15 +97,23 @@ final class RequestSchemeTest extends TestCase
         self::assertFalse(\Gojira_RequestScheme::isHttps());
     }
 
-    public function testFirstForwardedValueWins(): void
+    public function testLastForwardedValueWins(): void
     {
         \Gojira_RequestScheme::configure(false, ['10.0.0.5']);
 
-        $this->forwarded('10.0.0.5', 'HTTPS, http');
+        $this->forwarded('10.0.0.5', 'http, HTTPS');
         self::assertTrue(\Gojira_RequestScheme::isHttps());
 
-        $this->forwarded('10.0.0.5', 'http, https');
-        self::assertFalse(\Gojira_RequestScheme::isHttps());
+        $this->forwarded('10.0.0.5', 'https, http');
+        self::assertFalse(\Gojira_RequestScheme::isHttps(), 'o primeiro valor pode ter vindo do cliente');
+    }
+
+    public function testZeroPrefixTrustsEveryAddress(): void
+    {
+        \Gojira_RequestScheme::configure(false, ['0.0.0.0/0']);
+        $this->forwarded('203.0.113.9');
+
+        self::assertTrue(\Gojira_RequestScheme::isHttps());
     }
 
     public function testForcedSecureIgnoresTheRequest(): void
