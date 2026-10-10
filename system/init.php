@@ -15,6 +15,8 @@
       require_once( $systemPath . 'class/tool.class.php' );
       require_once( $systemPath . 'class/connection.class.php' );
       require_once( $systemPath . 'class/config.class.php' );
+      require_once( $systemPath . 'class/env.class.php' );
+      require_once( $systemPath . 'class/host.class.php' );
       require_once( $systemPath . 'class/login.class.php' );
       require_once( $systemPath . 'class/component.class.php' );
       require_once( $systemPath . 'class/controller.class.php' );
@@ -31,24 +33,17 @@
       $globals->cfg    = new Config( $absPath );
       $globals->smarty = new \Smarty\Smarty();
 
-      //Se não tiver gerado na aplicação a URL base, gera agora.
-      if( !isset( $baseURL ) ){
-         $baseURL = $globals->cfg->getConfig( PROJECT_ID . '_ENGINE', 'BASE_URL');
-         if( empty( $baseURL ) ){
-            if( PHP_SAPI === 'cli'){
-               $baseURL = 'cli://';
-   
-            } else {
-               $baseURL = $_SERVER['SERVER_NAME'] . (isset( $_SERVER['REQUEST_URI'] ) ? $_SERVER['REQUEST_URI'] : '');
-               $baseURL = substr( $baseURL, 0, min(strrpos( $baseURL, '/' ), strlen( $baseURL )) );
-               if( substr( $baseURL, -1, 1 ) != '/' ) $baseURL .= '/';
-   
-               $globals->cfg->setConfig(PROJECT_ID . '_ENGINE', 'BASE_URL', $baseURL);
-            }
-         }
-      } else {
-         $globals->cfg->setConfig(PROJECT_ID . '_ENGINE', 'BASE_URL', $baseURL);
+      //Host fora de TRUSTED_HOSTS (quando configurado) recebe 400 antes de qualquer uso do Host
+      if( PHP_SAPI !== 'cli' && ! Gojira_Host::isTrusted( Gojira_Host::requestHost( $_SERVER ), Gojira_Host::trustedHosts( $globals->cfg, PROJECT_ID . '_ENGINE' ) ) ){
+         http_response_code( 400 );
+         header( 'Content-Type: text/plain; charset=utf-8' );
+         echo 'Bad Request';
+         exit;
       }
+
+      //URL base: $baseURL da aplicação, GOJIRA_BASE_URL, app_configs.ini ou detectada.
+      //A detectada pelo Host não é mais gravada no app_configs.ini.
+      $baseURL = Gojira_Host::resolveBaseUrl( $globals->cfg, PROJECT_ID . '_ENGINE', isset( $baseURL ) ? (string) $baseURL : null, $_SERVER, PHP_SAPI );
 
 
       //Se não tiver a url do sistema, gera agora
@@ -78,6 +73,15 @@
 
          $globals->db = $globals->database;     //DEPRECADO - na lista de remoção em versões futuras. Carlsom A. Soares - 2019-09-15
       }
+
+      //Credenciais com valor de exemplo: exceção fora de DEV, aviso no log em DEV
+      $placeholders = Gojira_Env::checkPlaceholders(
+         [ 'DB_USER ($globals->database->user)'    => isset( $globals->database->user )     ? $globals->database->user     : '',
+           'DB_PWD ($globals->database->password)' => isset( $globals->database->password ) ? $globals->database->password : '' ],
+         defined( 'ENVIRONMENT' ) ? (string) ENVIRONMENT : 'DEV'
+      );
+      if( $placeholders ) error_log( 'GOJIRA: configuração com valor de exemplo: ' . implode( ', ', $placeholders ) . '. Defina o valor real no .env ou no ambiente.' );
+      unset( $placeholders );
 
       //Verifica se tem os dados para conexão
       if( isset( $globals->database ) ){
