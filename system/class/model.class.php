@@ -690,6 +690,8 @@ abstract class Model extends Connection{
 			$tmp = '';
 			foreach( $key as $i => $a ){
 				
+				$tmp = '';
+				
 				if( is_string( $i ) ){
 					$tmp = self::quoteIdentifier( $i ) . ' = "' . $this->escape( $a ) . '"';
 					

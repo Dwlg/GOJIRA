@@ -66,11 +66,11 @@ final class GetWhereTest extends ModelTestCase
         self::assertSame('`order_id` = "10" AND `line` = "2"', $this->model($structure)->getWhere([10, 2]));
     }
 
-    public function testListArrayWithMoreItemsThanPrimaryKeysRepeatsThePreviousClause(): void
+    public function testListArrayItemsWithoutMatchingPrimaryKeyAreIgnored(): void
     {
-        // O segundo item não tem chave primária correspondente; a variável
-        // temporária mantém o trecho anterior, que é anexado de novo.
-        self::assertSame('`id` = "1" AND `id` = "1"', $this->model()->getWhere([1, 2]));
+        // Antes a variável temporária não era zerada e o trecho anterior era
+        // anexado de novo ('`id` = "1" AND `id` = "1"').
+        self::assertSame('`id` = "1"', $this->model()->getWhere([1, 2]));
     }
 
     public function testArrayValuesAreEscaped(): void
