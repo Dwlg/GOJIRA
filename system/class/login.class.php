@@ -92,8 +92,7 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
             
             if( !$this->configured ) $this->configure( $this->userTable, $this->typeTable);
 
-				//Escapa o login de forma segura (real_escape_string) antes de interpolar no SQL.
-				//Não usar antiInjection aqui: ela não escapa aspas e permite bypass de autenticação.
+				//Valores interpolados no SQL são escapados com real_escape_string.
 				$login = $this->connection->escape( $login );
 				$type  = $this->getType( $type );
 
