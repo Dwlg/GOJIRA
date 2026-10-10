@@ -79,13 +79,14 @@ abstract class Model extends Connection{
 				$objModel->onLoad();
 				return $objModel;
 			} catch( Exception $e ){
-				throw( new ModelException( "Error in instantiation of Model <strong>\"" . $class . "\"</strong> MSG: " . $e->getMessage(), 0x2002 ) );
+				error_log( '[GOJIRA] Model::Load: falha ao instanciar "' . $class . '": ' . $e->getMessage() );
+				throw( new ModelException( 'Error in instantiation of Model "' . ControllerException::label( $class ) . '"', 0x2002 ) );
 			}
 			
 		} else {
 			
 			//Model não localizado no disco
-			throw( new ModelException( "Model <strong>\"" . $class . "\"</strong> not found in <strong>\"" . $dir . $file . "\"</strong>", 0x2001 ) );
+			throw( new ModelException( 'Model "' . ControllerException::label( $class ) . '" not found', 0x2001 ) );
 			
 		}
 		
@@ -336,7 +337,7 @@ abstract class Model extends Connection{
 		if( is_array( $this->structure ) ) return;
 		
 		if( ! $this->tableExist( $this->table ) ){
-			throw( new ModelException( "Invalid table: <strong>\"" . $this->table . "\"</strong>", 0x2003 ) );
+			throw( new ModelException( 'Invalid table: "' . ControllerException::label( $this->table ) . '"', 0x2003 ) );
 		}
 		
 		$sql  =  'SELECT COLUMN_NAME AS `name`, ' .

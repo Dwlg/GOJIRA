@@ -57,7 +57,8 @@
                   try{
                      $modelObj = new $modelClass( $globals );
                   } catch( Exception $e ){
-                     throw( new ComponentException( "Error in instantiation of Model for component <strong>\"" . $class . "\"</strong> MSG: " . $e->getMessage(), 0x3002 ) );
+                     error_log( '[GOJIRA] Component::Load: falha ao instanciar o model de "' . $class . '": ' . $e->getMessage() );
+                     throw( new ComponentException( 'Error in instantiation of Model for component "' . ControllerException::label( $class ) . '"', 0x3002 ) );
                   }
 
                //Se não existir um model para o componente, instancia um model generico para facilitar acesso a base
@@ -82,12 +83,13 @@
                   return $controllerObj;
 
                } catch( Exception $e ){
-                  throw( new ComponentException( "Error in instantiation of Controller for component <strong>\"" . $class . "\"</strong> MSG: " . $e->getMessage(), 0x3003 ) );
+                  error_log( '[GOJIRA] Component::Load: falha ao instanciar o controller de "' . $class . '": ' . $e->getMessage() );
+                  throw( new ComponentException( 'Error in instantiation of Controller for component "' . ControllerException::label( $class ) . '"', 0x3003 ) );
                }
                
                
             } else {
-               throw( new ComponentException( "Component Controller <strong>\"" . $class . "\"</strong> not found in <strong>\"" . $controllerDir . $file . "\"</strong>", 0x3001) );
+               throw( new ComponentException( 'Component Controller "' . ControllerException::label( $class ) . '" not found', 0x3001) );
             }
             
          }
