@@ -68,11 +68,9 @@ abstract class Model extends Connection{
 		$dir     = $globals->environment->modelPath;
 		$class   = ucfirst($class) . '_Model';
 
-		$full = $dir . $file;
-		$real = realpath( $full );
-
 		//Se localizar o arquivo no disco (e confinado ao diretório esperado)
-		if( $real !== false && strpos( $real, realpath( $dir ) . DIRECTORY_SEPARATOR ) === 0 ){
+		$full = GojiraCore::confinedFile( $dir, $file );
+		if( $full !== false ){
 
 			//Instancia o objeto
 			require_once( $full );
@@ -109,10 +107,11 @@ abstract class Model extends Connection{
 		$class   = ucwords(strtolower($class), "_0123456789") . '_Model';
 		$dir     = $globals->environment->modelPath;
 
-		//Se localizar o arquivo no disco
-		if( file_exists(  $dir . $file ) ){
+		//Se localizar o arquivo no disco (e confinado ao diretório esperado)
+		$full = GojiraCore::confinedFile( $dir, $file );
+		if( $full !== false ){
 
-			require_once( $dir . $file );
+			require_once( $full );
 			
 			if( class_exists( $class ) ){
 				$ret = true;

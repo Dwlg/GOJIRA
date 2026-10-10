@@ -108,6 +108,23 @@
 		}
 
 
+		//Resolve $dir . $file e devolve o caminho real somente se o arquivo existir
+		//dentro de $dir (links simbólicos para fora do diretório são recusados).
+		//Devolve false caso contrário.
+		public static function confinedFile( $dir, $file ){
+			$base = realpath( $dir );
+			$real = realpath( $dir . $file );
+
+			if( $base === false || $real === false || !is_file( $real ) ){
+				return false;
+			}
+
+			$base = rtrim( $base, DIRECTORY_SEPARATOR ) . DIRECTORY_SEPARATOR;
+
+			return strpos( $real, $base ) === 0 ? $real : false;
+		}
+
+
 		//Retorna o caminho absoluto atual
 		public function __absPath(){
 			return substr( __FILE__, 0, strlen( __FILE__ ) - strlen( end( explode( "/", __FILE__ ) ) ) );

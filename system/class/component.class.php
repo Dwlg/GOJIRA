@@ -45,13 +45,15 @@
             $modelClass = $class . '_ComponentModel';
             $modelDir   = $globals->environment->componentModelPath;
 
-            //Verifica se o controller (parte base e principal) existe
-            if( file_exists( $controllerDir . $file ) ){
+            //Verifica se o controller (parte base e principal) existe, confinado ao diretório esperado
+            $controllerFile = GojiraCore::confinedFile( $controllerDir, $file );
+            if( $controllerFile !== false ){
 
-               //Se o model desse componente existir
-               if( file_exists(  $modelDir . $file ) ){
-                  
-                  require_once( $modelDir . $file );
+               //Se o model desse componente existir (também confinado)
+               $modelFile = GojiraCore::confinedFile( $modelDir, $file );
+               if( $modelFile !== false ){
+
+                  require_once( $modelFile );
                   try{
                      $modelObj = new $modelClass( $globals );
                   } catch( Exception $e ){
@@ -67,7 +69,7 @@
                   $modelObj->onLoad();
                }
 
-               require_once( $controllerDir . $file );
+               require_once( $controllerFile );
 
                try{
 

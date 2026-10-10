@@ -46,12 +46,9 @@
             $class = ucwords(strtolower($class), "_0123456789") . '_Controller';
 				$dir   = $globals->environment->controllerPath;
 
-				//Confirma que o arquivo resolvido está realmente dentro do diretório de controllers
-				$full = $dir . $file;
-				$real = realpath( $full );
-
 				//Se localizar o arquivo no disco (e confinado ao diretório esperado)
-				if( $real !== false && strpos( $real, realpath( $dir ) . DIRECTORY_SEPARATOR ) === 0 ){
+				$full = GojiraCore::confinedFile( $dir, $file );
+				if( $full !== false ){
 
                //Instancia o objeto
 					require_once( $full );
@@ -131,10 +128,11 @@
             $class   = ucwords(strtolower($class), "_0123456789") . '_Controller';
 				$dir     = $globals->environment->controllerPath;
 
-            //Se localizar o arquivo no disco
-				if( file_exists(  $dir . $file ) ){
+            //Se localizar o arquivo no disco (e confinado ao diretório esperado)
+				$full = GojiraCore::confinedFile( $dir, $file );
+				if( $full !== false ){
 
-               require_once( $dir . $file );
+               require_once( $full );
             
                if( class_exists( $class ) ){
                   $ret = true;

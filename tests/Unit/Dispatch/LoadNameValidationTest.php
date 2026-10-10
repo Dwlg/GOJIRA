@@ -34,6 +34,12 @@ final class LoadNameValidationTest extends TestCase
         file_put_contents($root . '/app/model/loadprobe.php', '<?php class Loadprobe_Model extends Model {}');
         file_put_contents($root . '/app/component/controller/loadprobe.php', '<?php class Loadprobe_ComponentController extends Component {}');
         file_put_contents($root . '/app/component/model/loadprobe.php', '<?php class Loadprobe_ComponentModel {}');
+        file_put_contents($root . '/app/component/controller/nomodelprobe.php', '<?php class Nomodelprobe_ComponentController extends Component {}');
+
+        // Component sem model usa AppModel, que o init.php declara.
+        if (!class_exists('AppModel')) {
+            eval('class AppModel extends Model {}');
+        }
 
         // Arquivos fora dos diretórios permitidos. Se forem incluídos, definem a constante.
         foreach (['controller', 'model', 'component'] as $kind) {
@@ -170,22 +176,30 @@ final class LoadNameValidationTest extends TestCase
         \Model::Load('missingprobe', self::$globals);
     }
 
-    /** @return array<string, array{string, string, string}> */
+    /** @return array<string, array{string, string, string, string}> */
     public function linkedKinds(): array
     {
         return [
-            'controller' => ['controller', \Controller::class, \ControllerException::class],
-            'model'      => ['model', \Model::class, \ModelException::class],
+            'controller' => ['controller', 'controller', \Controller::class, \ControllerException::class],
+            'model'      => ['model', 'model', \Model::class, \ModelException::class],
+            'component'  => ['component', 'component/controller', \Component::class, \ComponentException::class],
         ];
     }
 
-    /** @dataProvider linkedKinds */
-    public function testSymlinkPointingOutsideIsNotLoaded(string $kind, string $class, string $exception): void
+    private function linkOutside(string $kind, string $dir, string $name): string
     {
-        $link = self::$root . '/app/' . $kind . '/linkedprobe.php';
+        $link = self::$root . '/app/' . $dir . '/' . $name . '.php';
         if (!@symlink(self::$root . '/outside_' . $kind . '.php', $link)) {
             self::markTestSkipped('O sistema de arquivos não permite link simbólico.');
         }
+
+        return $link;
+    }
+
+    /** @dataProvider linkedKinds */
+    public function testSymlinkPointingOutsideIsNotLoaded(string $kind, string $dir, string $class, string $exception): void
+    {
+        $link = $this->linkOutside($kind, $dir, 'linkedprobe');
 
         try {
             $class::Load('linkedprobe', self::$globals);
@@ -198,5 +212,54 @@ final class LoadNameValidationTest extends TestCase
         }
 
         self::assertFalse(defined('GOJIRA_TEST_OUTSIDE_' . strtoupper($kind) . '_INCLUDED'));
+    }
+
+    /** @return array<string, array{string, string, string}> */
+    public function linkedExistsKinds(): array
+    {
+        return [
+            'controller' => ['controller', 'controller', \Controller::class],
+            'model'      => ['model', 'model', \Model::class],
+        ];
+    }
+
+    /** @dataProvider linkedExistsKinds */
+    public function testExistsDoesNotFollowSymlinkOutside(string $kind, string $dir, string $class): void
+    {
+        $link = $this->linkOutside($kind, $dir, 'linkedexists');
+
+        try {
+            self::assertFalse($class::Exists('linkedexists'));
+        } finally {
+            unlink($link);
+        }
+
+        self::assertFalse(defined('GOJIRA_TEST_OUTSIDE_' . strtoupper($kind) . '_INCLUDED'));
+    }
+
+    public function testComponentModelSymlinkOutsideIsIgnored(): void
+    {
+        $link = $this->linkOutside('model', 'component/model', 'nomodelprobe');
+
+        try {
+            $component = \Component::Load('nomodelprobe', self::$globals);
+        } finally {
+            unlink($link);
+        }
+
+        self::assertInstanceOf('Nomodelprobe_ComponentController', $component);
+        self::assertFalse(defined('GOJIRA_TEST_OUTSIDE_MODEL_INCLUDED'));
+    }
+
+    public function testConfinedFileResolvesOnlyFilesInsideTheDirectory(): void
+    {
+        $dir = self::$root . '/app/controller/';
+
+        self::assertSame(realpath($dir . 'loadprobe.php'), \GojiraCore::confinedFile($dir, 'loadprobe.php'));
+        self::assertSame(realpath($dir . 'loadprobe.php'), \GojiraCore::confinedFile(rtrim($dir, '/'), '/loadprobe.php'));
+        self::assertFalse(\GojiraCore::confinedFile($dir, 'missing.php'));
+        self::assertFalse(\GojiraCore::confinedFile($dir, '../model/loadprobe.php'));
+        self::assertFalse(\GojiraCore::confinedFile($dir, ''));
+        self::assertFalse(\GojiraCore::confinedFile(self::$root . '/missing-dir/', 'loadprobe.php'));
     }
 }
