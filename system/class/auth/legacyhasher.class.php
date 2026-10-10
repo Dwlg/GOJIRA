@@ -25,9 +25,11 @@
          return hash_equals( $hash, $this->hash( $plain ) );
       }
 
-      //Hash legado sempre deve ser migrado.
+      //Usado como hasher principal (Login::setHasher), o formato legado é o próprio
+      //formato deste hasher e não é regravado. A migração para o esquema moderno
+      //é decidida pelo Gojira_BcryptHasher, que trata todo hash legado como desatualizado.
       public function needsRehash( string $hash ): bool {
-         return true;
+         return ! $this->looksLegacy( $hash );
       }
 
       //Heurística: identifica um hash no formato legado (128 hex).
