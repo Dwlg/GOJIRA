@@ -82,6 +82,24 @@ final class PasswordHasherTest extends TestCase
         self::assertFalse($hasher->needsRehash(password_hash('segredo', PASSWORD_BCRYPT, ['cost' => 11])));
     }
 
+    public function testBcryptCostIsFixedAtTwelveByDefault(): void
+    {
+        $hash = (new \Gojira_BcryptHasher())->hash('segredo');
+
+        self::assertSame(12, \Gojira_BcryptHasher::DEFAULT_COST);
+        self::assertSame(12, password_get_info($hash)['options']['cost']);
+    }
+
+    public function testBcryptCostIsConfigurable(): void
+    {
+        $hasher = new \Gojira_BcryptHasher(null, PASSWORD_BCRYPT, ['cost' => 5]);
+        $hash   = $hasher->hash('segredo');
+
+        self::assertSame(5, password_get_info($hash)['options']['cost']);
+        self::assertFalse($hasher->needsRehash($hash));
+        self::assertTrue((new \Gojira_BcryptHasher())->needsRehash($hash), 'custo abaixo do padrão pede rehash');
+    }
+
     public function testBcryptRejectsEmptyOrGarbageHash(): void
     {
         $hasher = new \Gojira_BcryptHasher(new \Gojira_LegacyHasher());

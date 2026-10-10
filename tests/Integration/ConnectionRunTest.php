@@ -144,12 +144,72 @@ final class ConnectionRunTest extends IntegrationTestCase
         self::assertSame(4, (int) self::$connection->runGet('SELECT COUNT(*) AS n FROM `' . $table . '`')['n']);
     }
 
-    /** @return array<string, array{string, array<int, mixed>}> */
+    public function testRunReportsAffectedRows(): void
+    {
+        $table = $this->itemTable();
+
+        self::assertTrue(self::$connection->run('UPDATE `' . $table . '` SET qty = qty + 1 WHERE qty < ?', [4]));
+        self::assertSame(2, self::$connection->affectedRows());
+
+        self::assertTrue(self::$connection->run('UPDATE `' . $table . '` SET qty = 0 WHERE name = ?', ['nenhum']));
+        self::assertSame(0, self::$connection->affectedRows());
+    }
+
+    /** @var string|null */
+    private $errorLogFile;
+
+    /** @var string|false */
+    private $previousErrorLog = false;
+
+    protected function setUp(): void
+    {
+        $this->errorLogFile     = (string) tempnam(sys_get_temp_dir(), 'gjlog');
+        $this->previousErrorLog = ini_set('error_log', $this->errorLogFile);
+    }
+
+    protected function tearDown(): void
+    {
+        ini_set('error_log', (string) $this->previousErrorLog);
+        @unlink((string) $this->errorLogFile);
+        parent::tearDown();
+    }
+
+    private function errorLog(): string
+    {
+        return (string) file_get_contents((string) $this->errorLogFile);
+    }
+
+    /**
+     * Toda falha de run/runAll/runGet é a mesma ConnectionException, com
+     * mensagem genérica, em qualquer versão do PHP. O detalhe vai para o log.
+     *
+     * @param array<int, mixed> $params
+     */
+    private function assertUniformFailure(string $method, string $sql, array $params, string $secret): void
+    {
+        try {
+            self::$connection->$method($sql, $params);
+            self::fail($method . ' deveria lançar ConnectionException');
+        } catch (\ConnectionException $e) {
+            self::assertSame(DB_CONNECTION_INVALID_SQL, $e->getMessage());
+            self::assertSame(DB_CONNECTION_ERR_BOUND, $e->getCode());
+            self::assertNull($e->getPrevious());
+            self::assertStringNotContainsString($secret, $e->getMessage());
+        }
+
+        // runGet delega para runAll
+        self::assertStringContainsString('Connection::' . ($method === 'runGet' ? 'runAll' : $method) . ' falhou', $this->errorLog());
+    }
+
+    /** @return array<string, array{string, array<int, mixed>, string}> */
     public function invalidStatements(): array
     {
         return [
-            'sintaxe inválida'   => ['SELEC 1', []],
-            'tabela inexistente' => ['SELECT * FROM gj_test_nao_existe WHERE id = ?', [1]],
+            'sintaxe inválida'          => ['SELEC 1', [], 'SELEC'],
+            'tabela inexistente'        => ['SELECT * FROM gj_test_nao_existe WHERE id = ?', [1], 'gj_test_nao_existe'],
+            'parâmetros a menos'        => ['SELECT ? AS a, ? AS b', [1], 'SELECT'],
+            'parâmetros a mais'         => ['SELECT ? AS a', [1, 2], 'SELECT'],
+            'placeholder sem parâmetro' => ['SELECT ? AS a', [], 'SELECT'],
         ];
     }
 
@@ -157,33 +217,36 @@ final class ConnectionRunTest extends IntegrationTestCase
      * @dataProvider invalidStatements
      * @param array<int, mixed> $params
      */
-    public function testInvalidSqlThrowsInRunAllAndRunGet(string $sql, array $params): void
+    public function testInvalidStatementFailsUniformly(string $sql, array $params, string $secret): void
     {
-        foreach (['runAll', 'runGet'] as $method) {
-            try {
-                self::$connection->$method($sql, $params);
-                self::fail($method . ' deveria lançar exceção para SQL inválido');
-            } catch (\Exception $e) {
-                self::assertNotSame('', $e->getMessage());
-            }
+        foreach (['run', 'runAll', 'runGet'] as $method) {
+            $this->assertUniformFailure($method, $sql, $params, $secret);
         }
+        self::assertStringContainsString($sql, $this->errorLog());
     }
 
-    /**
-     * @dataProvider invalidStatements
-     * @param array<int, mixed> $params
-     */
-    public function testInvalidSqlThrowsInRun(string $sql, array $params): void
+    /** Erro na execução (chave duplicada): exceção igual no PHP 8.0 e 8.1+, valor fora da mensagem e do log. */
+    public function testExecutionErrorFailsUniformlyWithoutLeakingValues(): void
+    {
+        $table = $this->createTable('id INT PRIMARY KEY, name VARCHAR(50) NOT NULL');
+        self::$connection->run('INSERT INTO `' . $table . '` (id, name) VALUES (?, ?)', [1, 'a']);
+
+        $this->assertUniformFailure('run', 'INSERT INTO `' . $table . '` (id, name) VALUES (?, ?)', [1, 'marcador-valor'], 'marcador-valor');
+        self::assertStringNotContainsString('marcador-valor', $this->errorLog());
+    }
+
+    public function testExceptionIsAFrameworkException(): void
     {
         $this->expectException(\Exception::class);
-        self::$connection->run($sql, $params);
+        $this->expectExceptionMessage(DB_CONNECTION_INVALID_SQL);
+        self::$connection->runGet('SELEC 1');
     }
 
     public function testConnectionStillUsableAfterInvalidSql(): void
     {
         try {
             self::$connection->runGet('SELEC 1');
-        } catch (\Exception $e) {
+        } catch (\ConnectionException $e) {
             // esperado
         }
 

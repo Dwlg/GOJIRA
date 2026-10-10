@@ -14,9 +14,18 @@
       private $algo;
       private $options;
 
+      //Custo padrão do bcrypt, fixo para não depender da versão do PHP
+      //(o padrão do PHP é 10 até o 8.3 e 12 a partir do 8.4).
+      const DEFAULT_COST = 12;
+
+      //$options['cost'] troca o custo do bcrypt (ex.: ['cost' => 13]).
       function __construct( $legacy = null, $algo = PASSWORD_DEFAULT, array $options = [] ){
          $this->legacy  = $legacy;
          $this->algo    = $algo;
+
+         if( $algo === PASSWORD_BCRYPT && !isset( $options['cost'] ) ){
+            $options['cost'] = self::DEFAULT_COST;
+         }
          $this->options = $options;
       }
 
