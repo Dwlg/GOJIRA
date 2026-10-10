@@ -286,4 +286,76 @@ final class ThumbSourceTest extends TestCase
             putenv('GOJIRA_THUMB_MAX_SIZE');
         }
     }
+
+    public function testSourceAboveThePixelLimitIsRefusedBeforeDecoding(): void
+    {
+        // sample.png tem 8x6 = 48 pixels.
+        self::assertSame('image/png', \Gojira_Thumb::detectType(self::FIXTURES . 'sample.png', 48)['mime']);
+
+        $this->expectException(\Gojira_Thumb_Exception::class);
+        $this->expectExceptionCode(413);
+
+        \Gojira_Thumb::detectType(self::FIXTURES . 'sample.png', 47);
+    }
+
+    public function testPixelLimitsDefaultAndReadTheEnvironment(): void
+    {
+        putenv('GOJIRA_THUMB_MAX_PIXELS');
+        putenv('GOJIRA_THUMB_MAX_EFFECT_PIXELS');
+        self::assertSame(16000000, \Gojira_Thumb::maxPixels());
+        self::assertSame(4000000, \Gojira_Thumb::maxEffectPixels());
+
+        putenv('GOJIRA_THUMB_MAX_PIXELS=500');
+        putenv('GOJIRA_THUMB_MAX_EFFECT_PIXELS=abc');
+        try {
+            self::assertSame(500, \Gojira_Thumb::maxPixels());
+            self::assertSame(4000000, \Gojira_Thumb::maxEffectPixels());
+        } finally {
+            putenv('GOJIRA_THUMB_MAX_PIXELS');
+            putenv('GOJIRA_THUMB_MAX_EFFECT_PIXELS');
+        }
+    }
+
+    public function testHexColorAcceptsRrggbb(): void
+    {
+        self::assertSame('', \Gojira_Thumb::hexColor(''));
+        self::assertSame('', \Gojira_Thumb::hexColor(null));
+        self::assertSame('ff00AA', \Gojira_Thumb::hexColor('ff00AA'));
+        self::assertSame('000000', \Gojira_Thumb::hexColor('000000'));
+    }
+
+    /**
+     * @dataProvider invalidColors
+     *
+     * @param mixed $value
+     */
+    public function testInvalidHexColorsAreRefused($value): void
+    {
+        $this->expectException(\Gojira_Thumb_Exception::class);
+        $this->expectExceptionCode(400);
+
+        \Gojira_Thumb::hexColor($value);
+    }
+
+    public function invalidColors(): array
+    {
+        return [
+            'curta'        => ['fff'],
+            'longa'        => ['ff00ff00'],
+            'não hex'      => ['zzzzzz'],
+            'com #'        => ['#ff0000'],
+            'quebra final' => ["ff0000\n"],
+            'array'        => [['ff0000']],
+        ];
+    }
+
+    public function testEffectAreaIsLimited(): void
+    {
+        \Gojira_Thumb::checkEffectArea(100, 40, 4000);
+
+        $this->expectException(\Gojira_Thumb_Exception::class);
+        $this->expectExceptionCode(400);
+
+        \Gojira_Thumb::checkEffectArea(100, 41, 4000);
+    }
 }

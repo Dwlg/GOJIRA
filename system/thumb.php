@@ -135,6 +135,7 @@
 	function imagefilterhue($im,$r,$g,$b){
 		
 		$rgb = $r+$g+$b;
+		if( $rgb == 0 ) return;   //Preto não define matiz; mantém a imagem
 		$col = array($r/$rgb,$b/$rgb,$g/$rgb);
 		$height = imagesy($im);
 		$width = imagesx($im);
@@ -333,6 +334,8 @@ try{
    $w    = Gojira_Thumb::dimension( $w, $max );
    $h    = Gojira_Thumb::dimension( $h, $max );
    $b    = Gojira_Thumb::dimension( $b, $max );
+   $c    = Gojira_Thumb::hexColor( $c );
+   $hue  = Gojira_Thumb::hexColor( $hue );
 
    if( $info['width'] < 1 || $info['height'] < 1 ){
       throw new Gojira_Thumb_Exception( 'Imagem inválida.', 415 );
@@ -344,6 +347,11 @@ try{
 
    if( $type == 'crop' && ( $w == 0 || $h == 0 || 2 * $b >= min( $w, $h ) ) ){
       throw new Gojira_Thumb_Exception( 'Informe w e h válidos no crop.', 400 );
+   }
+
+   //Sem t, a origem é servida inteira: cada lado respeita o mesmo limite do resize
+   if( $type != 'resize' && $type != 'crop' && ( $info['width'] > $max || $info['height'] > $max ) ){
+      throw new Gojira_Thumb_Exception( 'Imagem acima de ' . $max . ' px; use t=resize.', 400 );
    }
 
    if( ! function_exists( 'imagecreatetruecolor' ) ){
@@ -367,6 +375,10 @@ if( $type == "resize" ){
 
 }
 
+
+if( $c != '' || $hue != '' ){
+   Gojira_Thumb::checkEffectArea( imagesx( $image_f ), imagesy( $image_f ) );
+}
 
 setImageFilter( $image_f, $f, $hue);
 setImageColor( $image_f, $c );

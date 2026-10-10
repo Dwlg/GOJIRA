@@ -8,6 +8,10 @@
      Qualquer outro wrapper de stream é recusado.
    - Largura, altura e tamanho máximo limitados a GOJIRA_THUMB_MAX_SIZE (padrão 4000 px).
    - Só abre JPEG, PNG e GIF, identificados pelo conteúdo (getimagesize), não pela extensão.
+   - A origem tem no máximo GOJIRA_THUMB_MAX_PIXELS pixels (padrão 16 milhões), checado
+     pelo cabeçalho, antes de decodificar.
+   - Os efeitos pixel a pixel (c e hue) só rodam em imagens de até
+     GOJIRA_THUMB_MAX_EFFECT_PIXELS pixels (padrão 4 milhões) e exigem cor hex RRGGBB.
 */
 
    class Gojira_Thumb_Exception extends Exception{
@@ -21,7 +25,9 @@
 
    class Gojira_Thumb{
 
-      const DEFAULT_MAX_SIZE = 4000;
+      const DEFAULT_MAX_SIZE          = 4000;
+      const DEFAULT_MAX_PIXELS        = 16000000;
+      const DEFAULT_MAX_EFFECT_PIXELS = 4000000;
 
       //Tipos aceitos: IMAGETYPE_* => mime
       private static $types = array(
@@ -55,10 +61,27 @@
 
 
       public static function maxSize(){
+         return self::positiveEnv( 'GOJIRA_THUMB_MAX_SIZE', self::DEFAULT_MAX_SIZE );
+      }
 
-         $env = getenv( 'GOJIRA_THUMB_MAX_SIZE' );
 
-         return ( $env !== false && ctype_digit( $env ) && (int) $env > 0 ) ? (int) $env : self::DEFAULT_MAX_SIZE;
+      //Teto de largura × altura da imagem de origem
+      public static function maxPixels(){
+         return self::positiveEnv( 'GOJIRA_THUMB_MAX_PIXELS', self::DEFAULT_MAX_PIXELS );
+      }
+
+
+      //Teto de largura × altura para os efeitos pixel a pixel (c e hue)
+      public static function maxEffectPixels(){
+         return self::positiveEnv( 'GOJIRA_THUMB_MAX_EFFECT_PIXELS', self::DEFAULT_MAX_EFFECT_PIXELS );
+      }
+
+
+      private static function positiveEnv( $name, $default ){
+
+         $env = getenv( $name );
+
+         return ( $env !== false && ctype_digit( $env ) && (int) $env > 0 ) ? (int) $env : $default;
       }
 
 
@@ -117,8 +140,8 @@
       }
 
 
-      //Identifica o tipo pelo conteúdo. Só JPEG, PNG e GIF.
-      public static function detectType( $source ){
+      //Identifica o tipo pelo conteúdo. Só JPEG, PNG e GIF, com no máximo $maxPixels pixels.
+      public static function detectType( $source, $maxPixels = null ){
 
          $info = @getimagesize( $source );
 
@@ -126,11 +149,42 @@
             throw new Gojira_Thumb_Exception( 'Formato de imagem não suportado.', 415 );
          }
 
+         $maxPixels = $maxPixels === null ? self::maxPixels() : (int) $maxPixels;
+         if( (float) $info[0] * (float) $info[1] > $maxPixels ){
+            throw new Gojira_Thumb_Exception( 'Imagem de origem acima do limite de ' . $maxPixels . ' pixels.', 413 );
+         }
+
          return array(
             'width'  => (int) $info[0],
             'height' => (int) $info[1],
             'mime'   => self::$types[ $info[2] ],
          );
+      }
+
+
+      //Valida uma cor RRGGBB (c e hue). Vazio vira ''; outro formato é recusado.
+      public static function hexColor( $value ){
+
+         if( $value === null || $value === '' ){
+            return '';
+         }
+
+         if( ! is_string( $value ) || ! preg_match( '/^[0-9a-f]{6}\z/i', $value ) ){
+            throw new Gojira_Thumb_Exception( 'Cor inválida; use o formato RRGGBB.', 400 );
+         }
+
+         return $value;
+      }
+
+
+      //Recusa efeito pixel a pixel em imagem maior que o teto
+      public static function checkEffectArea( $width, $height, $maxPixels = null ){
+
+         $maxPixels = $maxPixels === null ? self::maxEffectPixels() : (int) $maxPixels;
+
+         if( (float) $width * (float) $height > $maxPixels ){
+            throw new Gojira_Thumb_Exception( 'Imagem grande demais para c/hue (limite de ' . $maxPixels . ' pixels).', 400 );
+         }
       }
 
 

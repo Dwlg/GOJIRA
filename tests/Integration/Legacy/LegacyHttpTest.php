@@ -29,9 +29,11 @@ final class LegacyHttpTest extends TestCase
         for ($attempt = 0; $attempt < 5 && self::$server === null; $attempt++) {
             $port = random_int(20000, 45000);
             $env  = getenv();
-            unset($env['GOJIRA_THUMB_ALLOW_REMOTE'], $env['GOJIRA_THUMB_ROOT'], $env['GOJIRA_THUMB_MAX_SIZE'], $env['GOJIRA_ENABLE_CONSOLE']);
+            unset($env['GOJIRA_THUMB_ALLOW_REMOTE'], $env['GOJIRA_THUMB_ROOT'], $env['GOJIRA_ENABLE_CONSOLE']);
             $env['GOJIRA_ENABLE_CONSOLE'] = '1'; // mesmo ligado, fora de CLI o console responde 404
             $env['GOJIRA_THUMB_MAX_SIZE'] = (string) self::MAX; // limite baixo para o teste não gerar imagens enormes
+            $env['GOJIRA_THUMB_MAX_PIXELS']        = '900';   // square40.png (1600 px) passa do teto; wide.png (500 px) não
+            $env['GOJIRA_THUMB_MAX_EFFECT_PIXELS'] = '1000';  // c/hue até ~36x27
 
             $proc = proc_open(
                 [PHP_BINARY, '-S', '127.0.0.1:' . $port, '-t', GOJIRA_TESTS_ROOT],
@@ -211,5 +213,72 @@ final class LegacyHttpTest extends TestCase
             'resize sem m'   => ['&t=resize'],
             'crop sem h'     => ['&t=crop&w=10'],
         ];
+    }
+
+    public function testSourceAbovePixelLimitIsRefused(): void
+    {
+        [$status, $type] = $this->thumb('../tests/Fixtures/thumb/square40.png', '&t=resize&m=10');
+
+        self::assertSame(413, $status);
+        self::assertStringStartsWith('text/plain', $type);
+    }
+
+    public function testPathWithoutTypeRefusesSourceAboveMaxSize(): void
+    {
+        // wide.png tem 100x5: dentro do teto de pixels, mas com um lado acima de MAX.
+        [$status] = $this->thumb('../tests/Fixtures/thumb/wide.png');
+        self::assertSame(400, $status);
+
+        $this->requireGd();
+        [$status] = $this->thumb('../tests/Fixtures/thumb/wide.png', '&t=resize&m=50');
+        self::assertSame(200, $status);
+    }
+
+    /**
+     * @dataProvider invalidColorQueries
+     */
+    public function testInvalidColorsAreRefused(string $query): void
+    {
+        [$status] = $this->thumb('../tests/Fixtures/thumb/sample.png', $query);
+
+        self::assertSame(400, $status, $query);
+    }
+
+    public function invalidColorQueries(): array
+    {
+        return [
+            'c não hex'   => ['&c=zzzzzz'],
+            'c curta'     => ['&c=fff'],
+            'hue longa'   => ['&hue=1234567'],
+            'hue com #'   => ['&hue=%23ff0000'],
+        ];
+    }
+
+    public function testColorEffectsAboveTheAreaLimitAreRefused(): void
+    {
+        $this->requireGd();
+
+        // 64x48 = 3072 pixels, acima do teto de 1000.
+        [$status] = $this->thumb('../tests/Fixtures/thumb/sample.png', '&t=resize&m=64&c=ff0000');
+        self::assertSame(400, $status);
+
+        [$status] = $this->thumb('../tests/Fixtures/thumb/sample.png', '&t=resize&m=64&hue=00ff00');
+        self::assertSame(400, $status);
+
+        // 16x12 = 192 pixels.
+        [$status, $type] = $this->thumb('../tests/Fixtures/thumb/sample.png', '&t=resize&m=16&c=ff0000');
+        self::assertSame(200, $status);
+        self::assertSame('image/png', $type);
+    }
+
+    public function testBlackHueDoesNotDivideByZero(): void
+    {
+        $this->requireGd();
+
+        [$status, $type, $body] = $this->thumb('../tests/Fixtures/thumb/sample.png', '&hue=000000');
+
+        self::assertSame(200, $status);
+        self::assertSame('image/png', $type);
+        self::assertNotFalse(getimagesizefromstring($body));
     }
 }
