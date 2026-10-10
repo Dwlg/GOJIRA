@@ -21,6 +21,12 @@ class Demo_Controller extends AppController
         return ['v' => $p['v'] ?? null];
     }
 
+    // Valor que o json_encode não codifica.
+    public function nan($p)
+    {
+        return ['v' => NAN];
+    }
+
     public function text($p)
     {
         return 'plain text';

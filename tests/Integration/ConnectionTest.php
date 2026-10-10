@@ -113,8 +113,18 @@ final class ConnectionTest extends IntegrationTestCase
             return;
         }
 
-        $this->expectException(\mysqli_sql_exception::class);
-        self::$connection->execute('NOT VALID SQL');
+        // Desde a PR8 a mysqli_sql_exception (que traz trecho do SQL) vira uma
+        // ConnectionException genérica com o código do banco; o detalhe vai para o log.
+        $log  = sys_get_temp_dir() . '/gojira-conn-' . bin2hex(random_bytes(4)) . '.log';
+        $prev = ini_set('error_log', $log);
+        try {
+            $this->expectException(\ConnectionException::class);
+            $this->expectExceptionMessage(DB_CONNECTION_INVALID_SQL);
+            self::$connection->execute('NOT VALID SQL');
+        } finally {
+            ini_set('error_log', (string) $prev);
+            @unlink($log);
+        }
     }
 
     public function testSecureExecCommitsAllStatements(): void

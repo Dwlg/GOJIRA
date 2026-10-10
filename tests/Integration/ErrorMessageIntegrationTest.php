@@ -85,4 +85,36 @@ final class ErrorMessageIntegrationTest extends IntegrationTestCase
         self::assertStringContainsString('gj_test_', $log, 'o log identifica a tabela');
         self::assertStringNotContainsString('INSERT INTO', $log, 'o SQL montado não vai para o log');
     }
+
+    public function testQueryLegadaInvalidaSemSqlNaMensagem(): void
+    {
+        try {
+            self::$connection->query('SELECT marcador_sql_xyz FROM');
+            self::fail('a consulta inválida deveria falhar');
+        } catch (\Exception $e) {
+            self::assertSame(DB_CONNECTION_INVALID_SQL, $e->getMessage());
+            self::assertNull($e->getPrevious());
+            self::assertNotInstanceOf(\mysqli_sql_exception::class, $e);
+        }
+
+        self::assertStringContainsString('1064', (string) file_get_contents($this->log), 'o erro do banco vai para o log');
+    }
+
+    public function testExecuteLegadoInvalidoSemSqlNaMensagem(): void
+    {
+        // PHP 8.0 (relatório desligado): devolve false, como antes. PHP 8.1+: lança,
+        // como antes, mas uma ConnectionException genérica com o código do banco.
+        try {
+            $ret = self::$connection->execute('UPDATE marcador_sql_xyz SET');
+            self::assertLessThan(80100, PHP_VERSION_ID, 'no PHP 8.1+ a falha continua lançando exceção');
+            self::assertFalse($ret);
+        } catch (\ConnectionException $e) {
+            self::assertGreaterThanOrEqual(80100, PHP_VERSION_ID);
+            self::assertSame(DB_CONNECTION_INVALID_SQL, $e->getMessage());
+            self::assertSame(1064, $e->getCode());
+            self::assertNull($e->getPrevious());
+        }
+
+        self::assertStringContainsString('1064', (string) file_get_contents($this->log));
+    }
 }

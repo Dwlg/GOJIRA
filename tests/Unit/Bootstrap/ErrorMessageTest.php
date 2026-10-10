@@ -35,9 +35,22 @@ final class ErrorMessageTest extends TestCase
         }');
         file_put_contents($root . '/errwrong.php', '<?php class Outro_Nome_Controller extends Controller {}');
 
+        $secret = "Falha em /srv/secreto/arquivo.php: SELECT segredo FROM t <b>x</b>";
+        mkdir($root . '/model');
+        file_put_contents($root . '/model/errthrow.php', '<?php class Errthrow_Model { function __construct($g) { throw new Exception(' . var_export($secret, true) . '); } }');
+        mkdir($root . '/component');
+        mkdir($root . '/component/model');
+        file_put_contents($root . '/component/errcm.php', '<?php class Errcm_ComponentController { function __construct($g, $m) {} }');
+        file_put_contents($root . '/component/model/errcm.php', '<?php class Errcm_ComponentModel { function __construct($g) { throw new Exception(' . var_export($secret, true) . '); } }');
+        file_put_contents($root . '/component/errcc.php', '<?php class Errcc_ComponentController { function __construct($g, $m) { throw new Exception(' . var_export($secret, true) . '); } }');
+        file_put_contents($root . '/component/model/errcc.php', '<?php class Errcc_ComponentModel { function __construct($g) {} }');
+
         $globals                              = new \stdClass();
         $globals->environment                 = new \stdClass();
         $globals->environment->controllerPath = $root . '/';
+        $globals->environment->modelPath      = $root . '/model/';
+        $globals->environment->componentControllerPath = $root . '/component/';
+        $globals->environment->componentModelPath      = $root . '/component/model/';
 
         self::$root    = $root;
         self::$globals = $globals;
@@ -45,8 +58,10 @@ final class ErrorMessageTest extends TestCase
 
     public static function tearDownAfterClass(): void
     {
-        array_map('unlink', glob(self::$root . '/*'));
-        rmdir(self::$root);
+        foreach (['/component/model', '/component', '/model', ''] as $dir) {
+            array_map('unlink', array_filter(glob(self::$root . $dir . '/*'), 'is_file'));
+            rmdir(self::$root . $dir);
+        }
     }
 
     protected function setUp(): void
@@ -109,6 +124,67 @@ final class ErrorMessageTest extends TestCase
         $message = $this->controllerMessage('errprobe', 'aberto');
 
         self::assertSame('Unauthorized execution for method "aberto" in Controller Object "errprobe"', $message);
+    }
+
+    private function loadMessage(callable $load): \Exception
+    {
+        try {
+            $load();
+        } catch (\ModelException | \ComponentException $e) {
+            return $e;
+        }
+        self::fail('o Load não lançou exceção');
+    }
+
+    /**
+     * @dataProvider loadFailures
+     */
+    public function testLoadDeModelEComponenteSemCaminhoNemMensagemAninhada(string $kind, string $name, int $code, string $expected, bool $logged): void
+    {
+        $globals = self::$globals;
+        $e = $this->loadMessage(static function () use ($kind, $name, $globals) {
+            return $kind === 'model' ? \Model::Load($name, $globals) : \Component::Load($name, $globals);
+        });
+
+        self::assertSame($code, $e->getCode());
+        self::assertSame($expected, $e->getMessage());
+        $this->assertClean($e->getMessage());
+        self::assertStringNotContainsString('SELECT', $e->getMessage());
+        if ($logged) {
+            self::assertStringContainsString('SELECT segredo', (string) file_get_contents($this->log), 'o detalhe vai para o log');
+        }
+    }
+
+    public static function loadFailures(): array
+    {
+        return [
+            'model inexistente'          => ['model', 'naoexiste', 0x2001, 'Model "Naoexiste_Model" not found', false],
+            'model que falha'            => ['model', 'errthrow', 0x2002, 'Error in instantiation of Model "Errthrow_Model"', true],
+            'componente inexistente'     => ['component', 'naoexiste', 0x3001, 'Component Controller "Naoexiste" not found', false],
+            'model do componente falha'  => ['component', 'errcm', 0x3002, 'Error in instantiation of Model for component "Errcm"', true],
+            'controller do componente falha' => ['component', 'errcc', 0x3003, 'Error in instantiation of Controller for component "Errcc"', true],
+        ];
+    }
+
+    public function testEncodeJsonEscapaCaracteresDeHtml(): void
+    {
+        $json = \Engine::encodeJson(['v' => "<a href='x'>\"&\"</a>"]);
+
+        self::assertSame('{"v":"\\u003Ca href=\\u0027x\\u0027\\u003E\\u0022\\u0026\\u0022\\u003C\/a\\u003E"}', $json);
+        self::assertSame(['v' => "<a href='x'>\"&\"</a>"], json_decode($json, true));
+    }
+
+    public function testEncodeJsonSubstituiUtf8Invalido(): void
+    {
+        self::assertSame('{"v":"a\\ufffdb"}', \Engine::encodeJson(['v' => "a\xC3b"]));
+    }
+
+    public function testEncodeJsonFalhaComExcecaoEmVezDeCorpoVazio(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessage('JSON encoding failed');
+
+        \Engine::encodeJson(['v' => NAN]);
     }
 
     public function testLabelLimitaTamanhoECaracteres(): void

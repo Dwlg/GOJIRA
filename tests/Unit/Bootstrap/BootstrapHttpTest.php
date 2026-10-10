@@ -244,7 +244,18 @@ final class BootstrapHttpTest extends TestCase
 
         self::assertSame('application/json; charset=utf-8', $r['headers']['content-type']);
         self::assertSame('nosniff', $r['headers']['x-content-type-options']);
-        self::assertStringContainsString('<img', $r['json']['v'], 'o valor volta igual; o tipo é que impede a execução');
+        self::assertStringNotContainsString('<', $r['body'], 'o < sai como \\u003C');
+        self::assertStringContainsString('<img', $r['json']['v'], 'o valor decodificado é o mesmo');
+    }
+
+    public function testFalhaDeCodificacaoJsonNaoViraRespostaVazia(): void
+    {
+        $legacy = $this->get('demo/nan');
+        self::assertStringContainsString('JSON encoding failed', $legacy['body']);
+
+        $json = $this->get('demo/nan', ['GOJIRA_JSON_RESPONSES']);
+        self::assertSame(500, $json['status']);
+        self::assertSame('server_error', $json['json']['error']['code']);
     }
 
     public function testJsonNaoMudaRespostaEmTexto(): void
