@@ -1,6 +1,7 @@
 # Configuração local nunca é servida: .env (e qualquer arquivo iniciado por ponto)
-# e .ini (app_configs.ini). Vale com ou sem mod_rewrite e em qualquer subpasta.
-<FilesMatch "(?i)(^\.|\.ini$)">
+# e .ini com cópias de backup (app_configs.ini, .ini.bak, .ini~).
+# Vale com ou sem mod_rewrite e em qualquer subpasta.
+<FilesMatch "(?i)(^\.|\.ini(\..*|~)?$)">
    <IfModule mod_authz_core.c>
       Require all denied
    </IfModule>

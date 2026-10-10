@@ -2,10 +2,19 @@
 
 define('SYSDIR_NAME', '../system/');
 
-//.env opcional (fora do git e fora do webroot). Sem o arquivo, valem os defaults do constants.php.
-//Variáveis já definidas no ambiente do servidor têm precedência sobre o .env.
+//.env opcional (fora do git). Sem o arquivo, valem os defaults do constants.php.
+//Ordem: GOJIRA_ENV_FILE (variável do servidor), .env na pasta pai do projeto e,
+//por compatibilidade, .env na pasta do projeto (protegido pelo .htaccess).
+//O da pasta pai só é usado se estiver fora do DOCUMENT_ROOT, porque lá não há
+//.htaccess que o proteja. Variáveis do servidor têm precedência sobre o .env.
 require_once( __DIR__ . '/' . SYSDIR_NAME . 'class/env.class.php' );
-Gojira_Env::load( __DIR__ . '/.env' );
+$envFiles = [ Gojira_Env::get( 'GOJIRA_ENV_FILE' ), dirname( __DIR__ ) . '/.env', __DIR__ . '/.env' ];
+if( is_file( $envFiles[1] ) && Gojira_Env::servedByWeb( $envFiles[1], $_SERVER ) ){
+   error_log( 'GOJIRA: .env da pasta pai ignorado por estar dentro do DOCUMENT_ROOT; mova-o ou use GOJIRA_ENV_FILE.' );
+   $envFiles[1] = null;
+}
+Gojira_Env::loadFirst( $envFiles );
+unset( $envFiles );
 
 require_once( __DIR__ . '/constants.php' );
 
