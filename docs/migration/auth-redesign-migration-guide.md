@@ -135,8 +135,9 @@ Para a resposta não revelar quais logins existem:
 - Um login inexistente faz uma verificação contra um hash fictício no formato de
   gravação configurado (bcrypt com `LGN_PASSWORD_REHASH` ligada, legado com ela
   desligada, ou o do hasher injetado), e o tempo de resposta fica parecido com o de uma
-  senha errada. Numa base com os dois formatos misturados, o tempo segue o formato
-  configurado.
+  senha errada. Durante a migração, quando o hash guardado de um usuário está num
+  formato diferente do de gravação, o login dele também faz a verificação fictícia,
+  para o tempo não separar existente de inexistente.
 
 ---
 
@@ -233,10 +234,16 @@ if( ! $guard->check() ){
 - `$login->changePass()` revoga todos os tokens do usuário: um cookie copiado antes da
   troca de senha deixa de valer. Num fluxo de redefinição de senha que não use
   `changePass()`, chame `$store->revokeAllForUser( $id )`.
+- Se `logout()` ou `changePass()` encontram um cookie de remember-me (`remember_*` ou um
+  nome registrado) e o Login não tem store registrado, nada é revogado e o Login emite
+  `E_USER_NOTICE` uma vez por requisição. Registre o store nessas requisições.
 - A troca do token a cada uso é atômica: o token antigo é apagado com uma condição no
   selector e no hash do validator, e só quem o apagou recebe o novo. Se o mesmo cookie
   chega em duas requisições ao mesmo tempo, a segunda é tratada como cópia do cookie:
   todos os tokens do usuário são revogados e ele precisa entrar com a senha de novo.
+  Limitação conhecida: duas requisições legítimas e paralelas do mesmo navegador sem
+  sessão aberta (ex.: várias abas restauradas juntas) também caem nesse caso. Chame
+  `attemptFromRememberCookie()` numa única requisição de entrada, antes das demais.
 - Conta desativada, token expirado ou token de outro tipo de usuário não reabrem sessão.
 - Rode `$store->purgeExpired()` de tempos em tempos (ex.: num cron) para limpar tokens
   vencidos.
@@ -274,7 +281,10 @@ if( ! $guard->check() ){
   define( 'GOJIRA_TRUSTED_PROXIES', '10.0.0.5, 10.1.0.0/16' );
   ```
 
-  Vindo de qualquer outro endereço, o cabeçalho `X-Forwarded-Proto` é ignorado. A mesma
+  Vindo de qualquer outro endereço, o cabeçalho `X-Forwarded-Proto` é ignorado. Quando
+  ele traz uma lista, vale o último valor, que é o que o proxy confiável acrescentou. Uma
+  faixa `/0` (`0.0.0.0/0`, `::/0`) aceita qualquer endereço: qualquer cliente passa a
+  decidir o esquema, então só use se o servidor não for alcançável sem o proxy. A mesma
   regra vale para os cookies de identidade e de remember-me.
 
 ---
@@ -310,23 +320,23 @@ if( ! $guard->check() ){
 ## Testes
 
 A suíte do repositório roda na CI (GitHub Actions) em PHP 8.0 a 8.4, com a parte de
-integração contra MySQL 8.0 e MariaDB 10.6 reais. As fases 2 a 5 têm 171 testes
+integração contra MySQL 8.0 e MariaDB 10.6 reais. As fases 2 a 5 têm 179 testes
 próprios (contando cada caso de data provider):
 
 | Assunto | Arquivo | Testes |
 |---|---|---|
 | UserProvider padrão | `tests/Integration/Auth/TableUserProviderTest.php` | 18 |
-| Login como adapter, mensagens e tempo de login inexistente | `tests/Integration/Auth/LoginAdapterTest.php` | 18 |
+| Login como adapter, mensagens e tempo de login inexistente | `tests/Integration/Auth/LoginAdapterTest.php` | 20 |
 | Guard | `tests/Integration/Auth/SessionGuardTest.php` | 12 |
 | AccessPolicy | `tests/Unit/Auth/MapAccessPolicyTest.php` | 8 |
 | Despacho só de métodos públicos | `tests/Unit/Dispatch/ControllerCallTest.php` | 12 |
 | Remember-me | `tests/Integration/Auth/RememberMeTest.php` | 33 |
-| Revogação e rotação atômica do remember-me | `tests/Integration/Auth/RememberRevocationTest.php` | 15 |
+| Revogação e rotação atômica do remember-me | `tests/Integration/Auth/RememberRevocationTest.php` | 20 |
 | Cookies, modo cookie, proxy e senha temporária | `tests/Integration/Auth/LoginHardeningTest.php` | 27 |
 | Troca do id de sessão (processo separado, sessão real) | `tests/Integration/Auth/SessionRegenerationTest.php` | 7 |
-| HTTPS e proxy confiável | `tests/Unit/Auth/RequestSchemeTest.php` | 21 |
+| HTTPS e proxy confiável | `tests/Unit/Auth/RequestSchemeTest.php` | 22 |
 
-Com a fase 5, a suíte inteira tem 455 testes. Para rodar localmente (o host só precisa
+Com a fase 5, a suíte inteira tem 463 testes. Para rodar localmente (o host só precisa
 de Docker):
 
 ```sh
