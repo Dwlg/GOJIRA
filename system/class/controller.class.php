@@ -155,7 +155,11 @@
          //    AppController do projeto), e não em Controller ou GojiraCore;
          //  - com nome que não exista em Controller/GojiraCore. Assim um gancho do
          //    framework (onLoad, beforeCall...) continua fora do despacho mesmo quando
-         //    o projeto o sobrescreve no próprio controller.
+         //    o projeto o sobrescreve no próprio controller;
+         //  - que não seja um dos tratadores not_found/unauthorized.
+         //Atenção: todo método público do AppController do projeto vira action em
+         //todos os controllers. Métodos auxiliares (inclusive set_*/get_*) devem
+         //ser protected.
          //Os nomes de método do PHP não diferenciam maiúsculas, então a comparação
          //também não diferencia (ONLOAD, __Construct etc. são recusados).
          protected static function isDispatchable( $objController, $method ){
@@ -165,6 +169,12 @@
             }
 
             if( !method_exists( $objController, $method ) || method_exists( 'Controller', $method ) ){
+               return false;
+            }
+
+            //not_found e unauthorized são tratadores chamados pelo próprio Call,
+            //não actions: /x/not_found não os executa diretamente.
+            if( in_array( strtolower( $method ), array( 'not_found', 'unauthorized' ), true ) ){
                return false;
             }
 

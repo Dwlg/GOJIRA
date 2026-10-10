@@ -46,6 +46,12 @@ final class DispatchableMethodTest extends TestCase
         file_put_contents($root . '/disphandled.php', '<?php class Disphandled_Controller extends AppController { ' . $body . '
             function not_found($m, $p) { return "not_found"; }
         }');
+        // Tratadores com $p opcional: se forem chamados como action, devolvem "direto".
+        file_put_contents($root . '/dispcallbacks.php', '<?php class Dispcallbacks_Controller extends AppController {
+            function __construct($globals) { $this->globals = $globals; }
+            function not_found($m, $p = null) { return "not_found:" . (is_string($m) ? $m : "direto"); }
+            function unauthorized($m, $p = null) { return "unauthorized:" . (is_string($m) ? $m : "direto"); }
+        }');
 
         $globals                              = new \stdClass();
         $globals->environment                 = new \stdClass();
@@ -89,6 +95,8 @@ final class DispatchableMethodTest extends TestCase
             'estatico', 'ESTATICO',
             // Não público no AppController do projeto
             'appinterno',
+            // Tratadores do Call (o dispprobe não os declara; ver também testHandlerIsNotDispatchedAsAction)
+            'not_found', 'unauthorized',
             // Nomes que não são método
             '', 'naoexiste',
         ];
@@ -122,6 +130,23 @@ final class DispatchableMethodTest extends TestCase
     {
         self::assertSame('not_found', $this->call('disphandled', 'setAccessPolicy'));
         self::assertNull(\Controller::getAccessPolicy());
+    }
+
+    /** @return array<string, array{string}> */
+    public function handlerNames(): array
+    {
+        return [
+            'not_found'    => ['not_found'],
+            'NOT_FOUND'    => ['NOT_FOUND'],
+            'unauthorized' => ['unauthorized'],
+            'Unauthorized' => ['Unauthorized'],
+        ];
+    }
+
+    /** @dataProvider handlerNames */
+    public function testHandlerIsNotDispatchedAsAction(string $method): void
+    {
+        self::assertSame('not_found:' . $method, $this->call('dispcallbacks', $method));
     }
 
     public function testNonStringMethodIsNotFound(): void
