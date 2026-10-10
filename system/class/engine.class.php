@@ -2,6 +2,94 @@
 
    class Engine extends GojiraCore{
 
+      //Chaves de $globals que nunca chegam ao template, com ou sem allowlist
+      const TEMPLATE_HIDDEN_GLOBALS = '/db|database|conn|connection|smarty/i';
+
+      //Allowlist definida por Engine::setTemplateGlobals(); null segue a constante
+      private static $templateGlobals = null;
+
+      private static $deprecationsSent = [];
+
+
+      //Aplica ao Smarty as opções de saída. Com GOJIRA_ESCAPE_HTML, toda variável
+      //impressa no template é escapada ({$x nofilter} imprime sem escape).
+      static function configureSmarty( $smarty ){
+         if( defined('GOJIRA_ESCAPE_HTML') && GOJIRA_ESCAPE_HTML ){
+            $smarty->setEscapeHtml( true );
+         }
+      }
+
+
+      //Define quais chaves de $globals o template recebe (allowlist opt-in).
+      //null volta a seguir GOJIRA_TEMPLATE_GLOBALS; sem as duas, o template recebe
+      //o $globals inteiro, como antes (obsoleto).
+      static function setTemplateGlobals( $keys ){
+         self::$templateGlobals = ( $keys === null ? null : self::normalizeKeys( $keys ) );
+      }
+
+
+      //Allowlist em vigor, ou null quando o modo antigo vale
+      static function templateGlobals(){
+         if( self::$templateGlobals !== null ) return self::$templateGlobals;
+         if( defined('GOJIRA_TEMPLATE_GLOBALS') ) return self::normalizeKeys( GOJIRA_TEMPLATE_GLOBALS );
+         return null;
+      }
+
+
+      //Aceita array ou lista separada por vírgula
+      private static function normalizeKeys( $keys ){
+         if( !is_array( $keys ) ) $keys = explode( ',', (string)$keys );
+         $ret = [];
+         foreach( $keys as $key ){
+            $key = trim( (string)$key );
+            if( $key !== '' ) $ret[] = $key;
+         }
+         return array_values( array_unique( $ret ) );
+      }
+
+
+      //Passa as variáveis para o template. Sem allowlist, mantém o comportamento
+      //antigo: 'globals' é o objeto inteiro e cada chave (menos banco e Smarty) vira
+      //variável. Com allowlist, 'globals' é uma cópia só com as chaves permitidas.
+      static function assignTemplateVars( $smarty, $class, $proc, $param, $objData, $globals ){
+
+         $allow = self::templateGlobals();
+
+         $smarty->assign( 'class'      , $class );
+         $smarty->assign( 'proc'       , $proc );
+         $smarty->assign( 'param'      , $param );
+         $smarty->assign( 'objData'    , $objData );
+
+         if( $allow === null ){
+            $smarty->assign( 'globals' , $globals );
+         } else {
+            $visible = new StdClass();
+            foreach( $allow as $index ){
+               if( isset( $globals->$index ) && !preg_match( self::TEMPLATE_HIDDEN_GLOBALS, $index ) ){
+                  $visible->$index = $globals->$index;
+               }
+            }
+            $smarty->assign( 'globals' , $visible );
+         }
+
+         $smarty->assign( 'env'        , $globals->environment );
+
+         foreach( $globals as $index => $obj ){
+            if( !preg_match( self::TEMPLATE_HIDDEN_GLOBALS, $index ) && ( $allow === null || in_array( $index, $allow, true ) ) ){
+               $smarty->assign( $index, $globals->$index );
+            }
+         }
+      }
+
+
+      //Emite E_USER_DEPRECATED uma vez por requisição para cada recurso
+      private static function deprecated( $feature, $message ){
+         if( isset( self::$deprecationsSent[ $feature ] ) ) return;
+         self::$deprecationsSent[ $feature ] = true;
+         trigger_error( $message, E_USER_DEPRECATED );
+      }
+
+
       static function Render( $class, $proc, $param ){
 
          $class   = strtolower( $class );
@@ -22,22 +110,14 @@
             }
 
             //Passa as variaveis para o template
-            $globals->smarty->assign( 'class'      , $class );
-            $globals->smarty->assign( 'proc'       , $proc );
-            $globals->smarty->assign( 'param'      , $param );
-            $globals->smarty->assign( 'objData'    , $objData );
-            $globals->smarty->assign( 'globals'    , $globals );
-            $globals->smarty->assign( 'env'        , $globals->environment );
-
-            foreach( $globals as $index => $obj ){
-               if( !preg_match('/db|database|conn|connection|smarty/i', $index) ){
-                  $globals->smarty->assign( $index, $globals->$index );   
-               }
-            }
+            self::assignTemplateVars( $globals->smarty, $class, $proc, $param, $objData, $globals );
 
 
             //Renderiza o view
             if( file_exists( $globals->environment->viewPath . $file ) ){
+               if( self::templateGlobals() === null ){
+                  self::deprecated( 'template-globals', 'Engine: exposing the whole $globals to the template is deprecated; define GOJIRA_TEMPLATE_GLOBALS (allowlist) or call Engine::setTemplateGlobals()' );
+               }
                return $globals->smarty->fetch( $file );
             } elseif( is_object($objData) || is_array($objData) ){
                return json_encode( $objData );
