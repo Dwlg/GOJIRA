@@ -254,4 +254,124 @@ final class LoginTest extends IntegrationTestCase
         $this->expectExceptionCode(0x9001);
         $this->loginWithoutTypeTable()->login('ana', 'segredo', 'adm"');
     }
+
+    private static function isModernHash(string $hash): bool
+    {
+        return !empty(password_get_info($hash)['algo']);
+    }
+
+    public function testLegacyHashAuthenticatesAndIsRehashedWithPasswordHash(): void
+    {
+        $legacy = $this->storedHash('ana');
+        self::assertSame($this->login->toPassword('segredo'), $legacy);
+
+        self::assertEquals($this->codes['ana'], $this->login->login('ana', 'segredo', 'admin'));
+
+        $stored = $this->storedHash('ana');
+        self::assertNotSame($legacy, $stored);
+        self::assertTrue(self::isModernHash($stored), 'o hash legado deve ser regravado com password_hash');
+        self::assertTrue(password_verify('segredo', $stored));
+    }
+
+    public function testRehashTouchesOnlyTheAuthenticatedUser(): void
+    {
+        $before = $this->storedHash('o"neil');
+
+        $this->login->login('ana', 'segredo', 'admin');
+
+        self::assertSame($before, $this->storedHash('o"neil'));
+    }
+
+    public function testModernHashAuthenticatesAndIsKept(): void
+    {
+        $this->login->login('ana', 'segredo', 'admin');
+        $modern   = $this->storedHash('ana');
+        $_SESSION = [];
+
+        self::assertEquals($this->codes['ana'], $this->login->login('ana', 'segredo', 'admin'));
+        self::assertSame($modern, $this->storedHash('ana'), 'hash moderno atualizado não é regravado');
+    }
+
+    public function testWrongPasswordAgainstModernHashIsRejected(): void
+    {
+        $this->login->login('ana', 'segredo', 'admin');
+
+        $this->expectExceptionCode(0x9003);
+        $this->login->login('ana', 'outra', 'admin');
+    }
+
+    public function testModernHashSentThroughFormDoesNotAuthenticate(): void
+    {
+        $this->login->login('ana', 'segredo', 'admin');
+
+        $this->expectExceptionCode(0x9003);
+        $this->login->login('ana', $this->storedHash('ana'), 'admin');
+    }
+
+    public function testFailedLoginDoesNotRehash(): void
+    {
+        $legacy = $this->storedHash('ana');
+
+        try {
+            $this->login->login('ana', 'outra', 'admin');
+            self::fail('senha errada deveria ser rejeitada');
+        } catch (\Exception $e) {
+            self::assertSame(0x9003, $e->getCode());
+        }
+
+        self::assertSame($legacy, $this->storedHash('ana'));
+    }
+
+    public function testServerSideHashFlagDoesNotRehash(): void
+    {
+        $legacy = $this->storedHash('ana');
+
+        $this->login->login('ana', $legacy, 'admin', true);
+
+        self::assertSame($legacy, $this->storedHash('ana'));
+    }
+
+    public function testOutdatedModernHashIsRehashed(): void
+    {
+        $old = password_hash('segredo', PASSWORD_BCRYPT, ['cost' => 4]);
+        self::$connection->run('UPDATE `' . $this->userTable . '` SET password = ? WHERE id = ?', [$old, $this->codes['ana']]);
+
+        $this->login->setHasher(new \Gojira_BcryptHasher(new \Gojira_LegacyHasher(), PASSWORD_BCRYPT, ['cost' => 5]));
+        $this->login->login('ana', 'segredo', 'admin');
+
+        $stored = $this->storedHash('ana');
+        self::assertNotSame($old, $stored);
+        self::assertSame(5, password_get_info($stored)['options']['cost']);
+    }
+
+    public function testLegacyHasherKeepsLegacyHashes(): void
+    {
+        $legacy = $this->storedHash('ana');
+
+        $this->login->setHasher(new \Gojira_LegacyHasher());
+        self::assertEquals($this->codes['ana'], $this->login->login('ana', 'segredo', 'admin'));
+        self::assertStringNotContainsString('UPDATE', (string) self::$connection->get_lastCommand(), 'o login não deve regravar a senha');
+
+        self::assertSame($legacy, $this->storedHash('ana'));
+    }
+
+    public function testChangePassStoresModernHash(): void
+    {
+        self::assertTrue($this->login->changePass($this->codes['ana'], "nova'senha"));
+
+        $stored = $this->storedHash('ana');
+        self::assertTrue(self::isModernHash($stored));
+        self::assertTrue(password_verify("nova'senha", $stored));
+        self::assertSame($this->login->toPassword('segredo'), $this->storedHash('o"neil'));
+
+        self::assertEquals($this->codes['ana'], $this->login->login('ana', "nova'senha", 'admin'));
+    }
+
+    public function testChangePassUsesInjectedHasher(): void
+    {
+        $this->login->setHasher(new \Gojira_LegacyHasher());
+        $this->login->changePass($this->codes['ana'], 'nova');
+
+        self::assertSame($this->login->toPassword('nova'), $this->storedHash('ana'));
+    }
 }
