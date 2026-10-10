@@ -68,30 +68,69 @@ final class SaveRowTest extends ModelTestCase
 
     public function testValuesShapedAsListedFunctionAreWrittenUnquoted(): void
     {
+        [$sql, $deprecations] = $this->withDeprecations(function () {
+            return $this->model()->saveRow(['name' => 'UPPER(name)', 'created' => 'NOW()', 'birth' => 'CURDATE()'], true);
+        });
+
         self::assertSame(
             'INSERT INTO `recording`(`name`, `status`, `created`, `birth`) VALUES(UPPER(name), NULL, NOW(), CURDATE())',
-            $this->model()->saveRow(['name' => 'UPPER(name)', 'created' => 'NOW()', 'birth' => 'CURDATE()'], true)
+            $sql
         );
+        self::assertCount(1, $deprecations, 'só UPPER(name) tem argumento');
     }
 
-    public function testTextKeepsCharactersThatAntiInjectionWouldRemoveFromOtherTypes(): void
+    public function testTextKeepsCharactersThatAntiInjectionUsedToRemoveFromOtherTypes(): void
     {
         self::assertSame(
-            'INSERT INTO `recording`(`name`, `status`, `created`, `birth`) VALUES("a -- b * c", 12, NULL, NULL)',
-            $this->model()->saveRow(['name' => 'a -- b * c', 'status' => '1--2'], true)
+            'INSERT INTO `recording`(`name`, `status`, `created`, `birth`) VALUES("a -- b * c \\\\ d", 12, NULL, NULL)',
+            $this->model()->saveRow(['name' => 'a -- b * c \\ d', 'status' => '12'], true)
         );
     }
 
-    public function testPrimaryKeyValueIsInterpolatedInExistCompareWithoutEscaping(): void
+    public function testNonNumericValueInIntegerColumnThrows(): void
     {
+        // Antes o antiInjection transformava '1--2' em 12 e gravava.
+        $this->expectException(\ModelException::class);
+        $this->expectExceptionCode(0x2017);
+
+        $this->model()->saveRow(['name' => 'x', 'status' => '1--2'], true);
+    }
+
+    public function testIsoDatesAreWrittenAsGiven(): void
+    {
+        self::assertSame(
+            'INSERT INTO `recording`(`name`, `status`, `created`, `birth`) VALUES("Ana", NULL, "2024-12-25 10:30:00", "2024-12-25")',
+            $this->model()->saveRow(['name' => 'Ana', 'created' => '2024-12-25 10:30:00', 'birth' => '2024-12-25'], true)
+        );
+    }
+
+    public function testPrimaryKeyValueIsEscapedInExistCompare(): void
+    {
+        // Antes: '`code`="a"b"' (sem escape).
         $structure = TableColumn::structure([
             TableColumn::make('code', 'varchar', ['primary' => true]),
             TableColumn::make('name', 'varchar'),
         ]);
         $model = $this->model($structure);
-        $model->saveRow(['code' => 'a"b', 'name' => 'x'], true);
+        $sql   = $model->saveRow(['code' => 'a"b', 'name' => 'x'], true);
 
-        self::assertSame('`code`="a"b"', $model->existCalls[0][3]);
+        self::assertSame('`code`="a\\"b"', $model->existCalls[0][3]);
+        self::assertSame('INSERT INTO `recording`(`code`, `name`) VALUES("a\\"b", "x")', $sql);
+    }
+
+    public function testPrimaryKeyValueIsEscapedInUpdateWhere(): void
+    {
+        $structure = TableColumn::structure([
+            TableColumn::make('code', 'varchar', ['primary' => true]),
+            TableColumn::make('name', 'varchar'),
+        ]);
+        $model              = $this->model($structure);
+        $model->existResult = true;
+
+        self::assertSame(
+            'UPDATE `recording` SET `code`="a\\\'b", `name`="x" WHERE `code`="a\\\'b"',
+            $model->saveRow(['code' => "a'b", 'name' => 'x'], true)
+        );
     }
 
     public function testTimestampColumnIsWrittenAsNullWhenEmpty(): void

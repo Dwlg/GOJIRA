@@ -470,9 +470,9 @@ define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
 
             $sql = '';
 
-            if( !empty( $column  ) ) $sql .= '`' . $column . '`' . ( strtolower($value ?? '') == 'null' || is_null($value) ? ' IS NULL ' : '="' . $value . '" ');
+            if( !empty( $column  ) ) $sql .= '`' . str_replace( '`', '``', $column ) . '`' . ( strtolower($value ?? '') == 'null' || is_null($value) ? ' IS NULL ' : '="' . $this->escape( $value ) . '" ');
             if( !empty( $compare ) ) $sql .= (empty( $sql ) ? '' : ' AND ') . $compare;
-            if( !empty( $sql     ) ) $sql = 'SELECT COUNT(*) AS a FROM `' . $table . '` WHERE ' . $sql;
+            if( !empty( $sql     ) ) $sql = 'SELECT COUNT(*) AS a FROM `' . str_replace( '`', '``', $table ) . '` WHERE ' . $sql;
 
             $query = $this->query( $sql );
             
@@ -494,7 +494,7 @@ define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
 
             $this->checkConnection();
 
-				$sql = 'SELECT COUNT(*) AS a FROM information_schema.TABLES WHERE TABLE_SCHEMA="' . $this->database . '" and TABLE_NAME="' . $table . '"';
+				$sql = 'SELECT COUNT(*) AS a FROM information_schema.TABLES WHERE TABLE_SCHEMA="' . $this->escape( self::$database ) . '" and TABLE_NAME="' . $this->escape( $table ) . '"';
   				$row = $this->fetch( $this->query( $sql ) );
 
 				return $row['a'] > 0;
@@ -511,7 +511,7 @@ define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
 
             $this->checkConnection();
 
-				$sql = 'select count(*) as a from information_schema.COLUMNS where TABLE_SCHEMA = "' . $this->database . '" and TABLE_NAME="' . $table . '" and COLUMN_NAME="' . $field . '"';
+				$sql = 'select count(*) as a from information_schema.COLUMNS where TABLE_SCHEMA = "' . $this->escape( self::$database ) . '" and TABLE_NAME="' . $this->escape( $table ) . '" and COLUMN_NAME="' . $this->escape( $field ) . '"';
 				$row = $this->fetch( $this->query( $sql ) );
 				
 				return $row['a'] > 0;
@@ -531,7 +531,11 @@ define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
             $ret = array();
             $sql = 'select ' . $field . ' AS a from ' . $table . ' where ' . $compare;
             
+            //O limite aceita só inteiro ou "n, m"; o resto lança exceção
             if( $max > 0 || is_string( $max ) ){
+               if( !( (is_int( $max ) && $max > 0) || (is_string( $max ) && preg_match( '/\A\s*\d+\s*(,\s*\d+\s*)?\z/', $max )) ) ){
+                  throw( new Exception( sprintf(DB_CONNECTION_INVALID_PARAMETER, 'GETVALUE') ) );
+               }
                $sql .= ' limit ' . $max;
             }
 				

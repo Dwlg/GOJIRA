@@ -75,6 +75,23 @@ class Recording_Model extends Fixture_Model
         return $this->existResult;
     }
 
+    /**
+     * Mesmo resultado do mysqli::real_escape_string com charset utf8, sem conexão.
+     * O escape real é coberto pelos testes de integração.
+     */
+    function escape($value)
+    {
+        return strtr((string) ($value ?? ''), [
+            '\\'   => '\\\\',
+            "\0"   => '\\0',
+            "\n"   => '\\n',
+            "\r"   => '\\r',
+            "'"    => "\\'",
+            '"'    => '\\"',
+            "\x1a" => '\\Z',
+        ]);
+    }
+
     public function lastRecorded(): string
     {
         if ($this->recorded === []) {

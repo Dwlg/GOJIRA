@@ -89,32 +89,66 @@ final class MakeCommandTest extends ModelTestCase
         self::assertSame(
             'SELECT status, COUNT(*) AS "total" FROM `recording` as `a`  GROUP BY status'
             . ' HAVING  COUNT(*) > 1  AND  status > 0 '
-            . ' ORDER BY status DESC, a.name ASC LIMIT 10, 20',
+            . ' ORDER BY `status` DESC, a.name ASC LIMIT 10, 20',
             $this->command($model)
         );
     }
 
     /** @dataProvider orderExpressions */
-    public function testOrderExpressionQuoting(string $expression, string $expected): void
+    public function testOrderExpressionQuoting(string $expression, string $expected, int $deprecationCount): void
     {
         $model = $this->model();
         $model->field('id')->order($expression);
 
-        self::assertSame('SELECT id FROM `recording` as `a`  ORDER BY ' . $expected, $this->command($model));
+        [$command, $deprecations] = $this->withDeprecations(function () use ($model) {
+            return $this->command($model);
+        });
+
+        self::assertSame('SELECT id FROM `recording` as `a`  ORDER BY ' . $expected, $command);
+        self::assertCount($deprecationCount, $deprecations);
     }
 
     public function orderExpressions(): array
     {
-        // A crase só é aplicada quando "$ord > 0" é falso e não há "." nem "(".
-        // No PHP 8, um nome que começa com letra é maior que "0" na comparação
-        // de strings, então sai sem crase.
+        // Antes a crase dependia de "$ord > 0", que no PHP 8 é verdadeiro para
+        // qualquer nome iniciado por letra: 'name' saía sem crase e ' name' saía
+        // como '` name`'. Agora nome simples sempre recebe crase.
         return [
-            'nome simples'        => ['name', 'name ASC'],
-            'posição numérica'    => ['2', '2 ASC'],
-            'com tabela'          => ['a.name', 'a.name ASC'],
-            'com função'          => ['LENGTH(name)', 'LENGTH(name) ASC'],
-            'com espaço inicial'  => [' name', '` name` ASC'],
+            'nome simples'        => ['name', '`name` ASC', 0],
+            'posição numérica'    => ['2', '2 ASC', 0],
+            'com tabela'          => ['a.name', 'a.name ASC', 0],
+            'já com crase'        => ['`name`', '`name` ASC', 0],
+            'com espaço inicial'  => [' name', '`name` ASC', 0],
+            'com função'          => ['LENGTH(name)', 'LENGTH(name) ASC', 1],
         ];
+    }
+
+    /** @dataProvider orderDirections */
+    public function testOrderDirection(string $direction, string $expected): void
+    {
+        $model = $this->model();
+        $model->field('id')->order('name', $direction);
+
+        self::assertSame('SELECT id FROM `recording` as `a`  ORDER BY `name` ' . $expected, $this->command($model));
+    }
+
+    public function orderDirections(): array
+    {
+        return [
+            'ASC'        => ['ASC', 'ASC'],
+            'desc'       => ['desc', 'desc'],
+            'vazia'      => ['', ''],
+        ];
+    }
+
+    public function testInvalidOrderDirectionThrows(): void
+    {
+        $model = $this->model();
+        $model->field('id')->order('name', 'DESC, id');
+
+        $this->expectException(\ModelException::class);
+        $this->expectExceptionCode(0x2019);
+        $this->command($model);
     }
 
     public function testLimitWithoutOffset(): void
@@ -125,12 +159,34 @@ final class MakeCommandTest extends ModelTestCase
         self::assertSame('SELECT id FROM `recording` as `a`  LIMIT 5', $this->command($model));
     }
 
-    public function testLimitValueIsConcatenatedVerbatim(): void
+    public function testLimitAcceptsNumericStrings(): void
     {
         $model = $this->model();
-        $model->field('id')->limit('5 OFFSET 2');
+        $model->field('id')->limit('5', '10');
 
-        self::assertSame('SELECT id FROM `recording` as `a`  LIMIT 5 OFFSET 2', $this->command($model));
+        self::assertSame('SELECT id FROM `recording` as `a`  LIMIT 5, 10', $this->command($model));
+    }
+
+    /** @dataProvider invalidLimits */
+    public function testInvalidLimitThrows($init, $end): void
+    {
+        // Antes o valor era concatenado como veio ('5 OFFSET 2' saía no SQL).
+        $model = $this->model();
+        $model->field('id')->limit($init, $end);
+
+        $this->expectException(\ModelException::class);
+        $this->expectExceptionCode(0x2016);
+        $this->command($model);
+    }
+
+    public function invalidLimits(): array
+    {
+        return [
+            'texto livre'   => ['5 OFFSET 2', 0],
+            'negativo'      => [-1, 0],
+            'fim com texto' => [5, '10 x'],
+            'fim negativo'  => [5, -1],
+        ];
     }
 
     public function testSubqueryObjectsInFromJoinAndWhere(): void

@@ -2,6 +2,7 @@
 
 namespace Gojira\Tests\Integration;
 
+use Gojira\Tests\Support\Deprecations;
 use Gojira\Tests\Support\IntegrationTestCase;
 
 /**
@@ -12,6 +13,13 @@ use Gojira\Tests\Support\IntegrationTestCase;
  */
 final class ModelTest extends IntegrationTestCase
 {
+    use Deprecations;
+
+    protected function setUp(): void
+    {
+        $this->resetModelDeprecations();
+    }
+
     private function itemModel(): \Fixture_Model
     {
         $table = $this->createTable(
@@ -144,7 +152,10 @@ final class ModelTest extends IntegrationTestCase
     public function testValueShapedAsListedFunctionIsEvaluatedByTheDatabase(): void
     {
         $model = $this->itemModel();
-        $model->saveRow(['name' => 'UPPER("abc")', 'created' => 'NOW()']);
+        [, $deprecations] = $this->withDeprecations(function () use ($model) {
+            return $model->saveRow(['name' => 'UPPER("abc")', 'created' => 'NOW()']);
+        });
+        self::assertCount(1, $deprecations);
 
         $row = $model->getData(1)[0];
         self::assertSame('ABC', $row->name);

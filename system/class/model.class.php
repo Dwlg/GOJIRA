@@ -19,6 +19,9 @@ abstract class Model extends Connection{
 	'DEFAULT', 'RAND', 'UUID', 'ANY_VALUE', 'FORMAT',
 	'COMPRESS', 'DECODE', 'ENCODE', 'MD5', 'SHA1', 'SHA2', 'UNCOMPRESS', 'VALIDATE_PASSWORD_STRENGTH',
 	'ABS', 'ACOS', 'ASIN', 'ATAN', 'CEIL', 'CEILING', 'CONV', 'COS', 'COT', 'DEGREES', 'EXP', 'FLOOR', 'LN', 'LOG', 'LOG10', 'LOG2', 'MOD', 'PI', 'POW', 'POWER', 'RADIANS', 'ROUND', 'SIGN', 'SIN', 'SQRT', 'TAN', 'TRUNCATE'];
+
+	//Avisos de deprecation já emitidos nesta requisição (um por recurso)
+	private static $deprecationsSent = [];
 	
 	
 	//Construtores do objeto
@@ -228,14 +231,19 @@ abstract class Model extends Connection{
 			$sql .= ' ORDER BY ';
 			$g    = 0;
 			foreach( $obj->sql['order'] as $a ){
-				$sql .= ( $g++ > 0 ? ', ' : '') . ( $a[0] > 0 || strpos( $a[0], '.' ) !== false || strpos( $a[0], '(' ) !== false ? $a[0] : '`' . $a[0] . '`') . ' ' . $a[1];
+				$sql .= ( $g++ > 0 ? ', ' : '') . $this->sqlOrderTerm( $a[0] ) . ' ' . $this->sqlOrderDirection( $a[1] );
 			}
 		}
 		
 		
 		//Parte do LIMIT
 		if( isset( $obj->sql['limit'] ) && count( $obj->sql['limit'] ) > 0 ){
-			$sql .= ' LIMIT ' . $obj->sql[ 'limit' ][0] . ($obj->sql[ 'limit' ][1] > 0 ? ', ' . $obj->sql[ 'limit' ][1] : '');
+			$end = $obj->sql[ 'limit' ][1];
+			if( $end === null || $end === '' ) $end = 0;
+			if( !self::isUnsignedInt( $end ) ){
+				throw( new ModelException( 'Invalid limit', 0x2016 ) );
+			}
+			$sql .= ' LIMIT ' . $this->sqlLimit( $obj->sql[ 'limit' ][0] ) . ((int)$end > 0 ? ', ' . (int)$end : '');
 		}
 		
 		return $sql;
@@ -351,8 +359,8 @@ abstract class Model extends Connection{
 		'COLUMN_KEY = "PRI" OR COLUMN_KEY = "UNI" as `unique`, ' .
 		'NOT( COLUMN_KEY = "" OR COLUMN_KEY IS NULL) as `index` ' .
 		'FROM information_schema.COLUMNS ' .
-		'WHERE TABLE_SCHEMA="' . $this->globals->database->name . '" ' .
-		'AND TABLE_NAME="' . $this->table . '" ORDER BY ORDINAL_POSITION';
+		'WHERE TABLE_SCHEMA="' . $this->escape( $this->globals->database->name ) . '" ' .
+		'AND TABLE_NAME="' . $this->escape( $this->table ) . '" ORDER BY ORDINAL_POSITION';
 		
 		
 		$query = $this->query( $sql );
@@ -420,16 +428,20 @@ abstract class Model extends Connection{
 		//Caso precise vir em uma ordem especifica
 		if( is_array( $sort ) ){
 			$order = '';
-			foreach( $sort as $a ) $order .= (empty( $order ) ? '' : ', ') . '`' . $a . '`';
+			foreach( $sort as $a ) $order .= (empty( $order ) ? '' : ', ') . self::quoteIdentifier( $a );
 			$sql .= ' ORDER BY ' . $order;
 		} elseif( !empty( $sort ) ){
+			//Lista de colunas com direção opcional é aceita; o resto é expressão livre
+			if( !preg_match( '/\A\s*`?\w+`?(\s+(ASC|DESC))?\s*(,\s*`?\w+`?(\s+(ASC|DESC))?\s*)*\z/i', $sort ) ){
+				self::deprecated( 'sort', 'Model::getData(): sort as a free SQL expression is deprecated; pass an array of column names' );
+			}
 			$sql .= ' ORDER BY ' . $sort;
 		}
 		
 		
 		//Caso seja preciso passar um limit de registros
-		if( is_array( $limit ) ) $limit = $limit[0] . (isset( $limit[1] ) ? ', ' . $limit[1] : '');
-		if( !empty( $limit ) )   $sql .= ' LIMIT ' . $limit;
+		if( is_array( $limit ) ) $limit = $this->sqlLimit( $limit );
+		if( !empty( $limit ) )   $sql .= ' LIMIT ' . $this->sqlLimit( $limit );
 		
 		if( $this->count( $sql ) > 0 ){
 			
@@ -488,6 +500,12 @@ abstract class Model extends Connection{
 	function delete( $key ){
 		
 		$this->updateTableInfo();
+		
+		//Sem chave não há o que apagar (antes, '' apagava a tabela inteira e null gerava SQL inválido).
+		//Para apagar tudo de propósito, passe a condição explícita, ex.: delete('1=1').
+		if( $key === '' || $key === null || $key === [] ){
+			throw( new ModelException( 'Delete requires a key', 0x2018 ) );
+		}
 		
 		$sql = 'DELETE FROM `' . $this->table . '` WHERE ' . $this->getWhere( $key );
 		
@@ -552,7 +570,7 @@ abstract class Model extends Connection{
 		
 		
 		//Monta a sentença de comparação no caso de ser um update e usa para identificar o mesmo
-		foreach( $pk as $i => $a ) $where .= (empty( $where ) ? '' : ' AND ') . '`' . $i . '`="' . $a . '"';
+		foreach( $pk as $i => $a ) $where .= (empty( $where ) ? '' : ' AND ') . self::quoteIdentifier( $i ) . '="' . $this->escape( $a ) . '"';
 		
 		if( $this->exist( $table, '', '', $where ) ){
 			
@@ -560,7 +578,7 @@ abstract class Model extends Connection{
 			foreach( $structure as $col ){
 				if( ! ( ($col->is_auto_increment || $col->is_primary_key) && $this->sqlField( $col, $row[ $col->name ] ) == 'NULL' ) ){
 					$sql .= ($sql === '' ? '' : ', ' );
-					$sql .= '`' . $col->name . '`=' . $this->sqlField( $col, $row[ $col->name ]);
+					$sql .= self::quoteIdentifier( $col->name ) . '=' . $this->sqlField( $col, $row[ $col->name ]);
 				}
 			}
 			
@@ -573,7 +591,7 @@ abstract class Model extends Connection{
 			$header = '';
 			foreach( $structure as $col ){
 				if( ! ($col->is_auto_increment && $this->sqlField( $col, $row[ $col->name ] ) == 'NULL' ) ){
-					$header .= ($sql === '' ? '' : ', ') . '`' . $col->name . '`';
+					$header .= ($sql === '' ? '' : ', ') . self::quoteIdentifier( $col->name );
 					$sql    .= ($sql === '' ? '' : ', ') . $this->sqlField( $col, $row[ $col->name ] );
 				}
 			}
@@ -597,8 +615,8 @@ abstract class Model extends Connection{
 						$a = $this->lastId;
 					}
 					
-					$where .= (empty( $sql ) ? '' : ' AND ') . '`' . $i . '`="' . $a . '"';
-					$sql   .= (empty( $sql ) ? '' : ', ') . '`' . $i . '`';
+					$where .= (empty( $sql ) ? '' : ' AND ') . self::quoteIdentifier( $i ) . '="' . $this->escape( $a ) . '"';
+					$sql   .= (empty( $sql ) ? '' : ', ') . self::quoteIdentifier( $i );
 					
 				}
 				
@@ -656,7 +674,7 @@ abstract class Model extends Connection{
 			
 		}elseif( is_numeric( $key ) ){
 			
-			$where .= $primary[ 0 ] . '="' . $key . '"';
+			$where .= $primary[ 0 ] . '="' . $this->escape( $key ) . '"';
 			
 		} elseif( is_string( $key ) ){
 			
@@ -669,13 +687,13 @@ abstract class Model extends Connection{
 			foreach( $key as $i => $a ){
 				
 				if( is_string( $i ) ){
-					$tmp =  '`' . $i . '` = "' . $a . '"';
+					$tmp = self::quoteIdentifier( $i ) . ' = "' . $this->escape( $a ) . '"';
 					
 				} elseif( isset( $primary[ $i ] ) ) {
-					$tmp = '`' . $primary[ $i ] . '` = "' . $a . '"';
+					$tmp = self::quoteIdentifier( $primary[ $i ] ) . ' = "' . $this->escape( $a ) . '"';
 					
 				} elseif( $c < count( $primary ) ){
-					$tmp = $primary[ $c ] . '="' . $a . '"';
+					$tmp = $primary[ $c ] . '="' . $this->escape( $a ) . '"';
 				}
 				
 				if( !empty( $tmp ) ){
@@ -699,15 +717,19 @@ abstract class Model extends Connection{
 		
 		if( is_null( $value ) ) return $value;
 		
-		if( strpos( '[char][varchar][enum][blog][mediumblob][longblob][tinyblob][smallblob][text][mediumtext][longtext][tinytext][smalltext]', $format->field_type ) ){
-			$value = $tools->antiInjection( $value, true, true );
-		} else {
-			$value = $tools->antiInjection( $value );
+		//A proteção é o escape no sqlField. Texto segue intacto; tipos numéricos e de
+		//data/hora só perdem os espaços das pontas (como antes) e viram string.
+		if( !strpos( '[char][varchar][enum][blog][mediumblob][longblob][tinyblob][smallblob][text][mediumtext][longtext][tinytext][smalltext]', $format->field_type ) &&
+		    is_scalar( $value ) &&
+		    strpos( '[timestamp][time][datetime][date][year][integer][int][bigint][mediumint][smallint][tinyint][decimal][double][float][real][unsigned]', '[' . $format->field_type . ']' ) !== false ){
+			$value = trim( (string)$value );
 		}
 		
 		
-		//Formatando as datas para o formato mysql
-		if( $value != 'NULL'  && ! preg_match( $this->mysqlFuncRegex, $value ?? '' ) ){
+		//Formatando as datas para o formato mysql (dd/mm/aaaa). Data já no formato
+		//do MySQL (aaaa-mm-dd ou aaaammdd) segue como está.
+		if( is_string( $value ) && $value != 'NULL' && ! preg_match( $this->mysqlFuncRegex, $value ) &&
+		    ! preg_match( '/\A(\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?|\d{8}(\d{6})?)\z/', $value ) ){
 			
 			if( ($format->field_type == 'datetime' || $format->field_type == 'timestamp') && (strlen( $value ) == 16 || strlen( $value ) == 19) ){
 				$value = $tools->dateToSql( $value, true );
@@ -729,21 +751,32 @@ abstract class Model extends Connection{
 		if( is_null( $value ) ){
 			$ret = 'NULL';
 			
-		} elseif( preg_match( $this->mysqlFuncRegex, $value ) || preg_match( $this->mysqlLiteralRegex, $value ) ){
+		} elseif( !is_scalar( $value ) ){
+			throw( new ModelException( 'Field <strong>' . $format->name . '</strong> has an invalid value', 0x2017 ) );
+			
+		} elseif( preg_match( $this->mysqlFuncRegex, (string)$value ) || preg_match( $this->mysqlLiteralRegex, (string)$value ) ){
+			//Função com argumento entra crua no SQL; só as sem argumento (NOW(), UUID()...) seguem sem aviso
+			if( !preg_match( '/\A\w+\(\s*\)\z/', (string)$value ) && !preg_match( $this->mysqlLiteralRegex, (string)$value ) ){
+				self::deprecated( 'function-value', 'Model: SQL function with arguments as a field value is deprecated' );
+			}
 			$ret = $value;
 			
 		} elseif( strpos( '[timestamp][time][datetime][date][year]', $format->field_type ) !== false ){
 			if( empty( $value ) && $format->accept_null ){
 				$ret = 'NULL';
 			} else {
-				$ret = '"' .  $value . '"';
+				$ret = '"' .  $this->escape( $value ) . '"';
 			}
 			
 		} elseif( strpos( '[integer][int][bigint][mediumint][smallint][tinyint][decimal][double][float][real][unsigned]', $format->field_type ) !== false ){
 			if( $value === '' ){
 				$ret = ($format->accept_null ? 'NULL' : 0);
-			} else {
+			} elseif( is_int( $value ) || is_float( $value ) || (is_string( $value ) && is_numeric( $value )) ){
 				$ret = $value;
+			} elseif( is_bool( $value ) ){
+				$ret = (int)$value;
+			} else {
+				throw( new ModelException( 'Field <strong>' . $format->name . '</strong> expects a number', 0x2017 ) );
 			}
 			
 		} elseif( $format->field_type == 'enum' ){
@@ -754,15 +787,94 @@ abstract class Model extends Connection{
 					$ret = ($format->accept_null ? 'NULL' : 0);
 				}
 			} else {
-				$ret = '"' . $value . '"';
+				$ret = '"' . $this->escape( $value ) . '"';
 			}
 			
 		} else {
-			$ret = '"' . addslashes($value) . '"';
+			$ret = '"' . $this->escape( $value ) . '"';
 		}
 		
 		return $ret;
 		
+	}
+	
+	
+	//Termo do ORDER BY do construtor de consulta. Nome simples recebe crase;
+	//posição numérica e coluna com tabela (a.nome) seguem como estão;
+	//qualquer outra expressão segue como está, com aviso de deprecation.
+	private function sqlOrderTerm( $term ){
+		
+		$term = trim( (string)$term );
+		
+		if( preg_match( '/\A\w+\z/', $term ) && !ctype_digit( $term ) ){
+			return self::quoteIdentifier( $term );
+		}
+		
+		if( !preg_match( '/\A(\d+|`[^`]+`|\w+\.\w+|`[^`]+`\.`[^`]+`)\z/', $term ) ){
+			self::deprecated( 'order', 'Model::order(): a free SQL expression is deprecated; pass a column name' );
+		}
+		
+		return $term;
+	}
+	
+	
+	//Direção do ORDER BY: só ASC, DESC ou vazio
+	private function sqlOrderDirection( $dir ){
+		
+		$dir = (string)$dir;
+		if( !in_array( strtoupper( trim( $dir ) ), ['', 'ASC', 'DESC'], true ) ){
+			throw( new ModelException( 'Invalid sort direction', 0x2019 ) );
+		}
+		
+		return $dir;
+	}
+	
+	
+	//Normaliza um LIMIT: inteiro, "n", "n, m" ou [n] / [n, m]. O resto lança ModelException.
+	protected function sqlLimit( $limit ){
+		
+		if( is_array( $limit ) ){
+			$parts = array_values( $limit );
+		} elseif( is_string( $limit ) && preg_match( '/\A\s*(\d+)\s*(?:,\s*(\d+)\s*)?\z/', $limit, $m ) ){
+			$parts = array_slice( $m, 1 );
+		} else {
+			$parts = [ $limit ];
+		}
+		
+		if( count( $parts ) < 1 || count( $parts ) > 2 ){
+			throw( new ModelException( 'Invalid limit', 0x2016 ) );
+		}
+		
+		foreach( $parts as $i => $a ){
+			if( !self::isUnsignedInt( $a ) ){
+				throw( new ModelException( 'Invalid limit', 0x2016 ) );
+			}
+			$parts[ $i ] = (int)$a;
+		}
+		
+		return implode( ', ', $parts );
+	}
+	
+	
+	//Inteiro não negativo, como int ou string só de dígitos
+	private static function isUnsignedInt( $value ){
+		return (is_int( $value ) && $value >= 0) || (is_string( $value ) && preg_match( '/\A\d+\z/', $value ) === 1);
+	}
+	
+	
+	//Coloca um identificador entre crases, duplicando crases internas
+	protected static function quoteIdentifier( $name ){
+		return '`' . str_replace( '`', '``', (string)$name ) . '`';
+	}
+	
+	
+	//Emite E_USER_DEPRECATED uma vez por requisição para cada recurso
+	protected static function deprecated( $feature, $message ){
+		
+		if( isset( self::$deprecationsSent[ $feature ] ) ) return;
+		self::$deprecationsSent[ $feature ] = true;
+		
+		trigger_error( $message, E_USER_DEPRECATED );
 	}
 	
 	

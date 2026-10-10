@@ -5,7 +5,8 @@ namespace Gojira\Tests\Unit\Model;
 use Gojira\Tests\Support\TableColumn;
 
 /**
- * Caracterização de Model::getWhere: fixa o SQL gerado hoje.
+ * Caracterização de Model::getWhere: fixa o SQL gerado. Desde a PR5 os
+ * valores do array são escapados; o resto do SQL não mudou.
  *
  * @group legacy-sql
  */
@@ -72,14 +73,26 @@ final class GetWhereTest extends ModelTestCase
         self::assertSame('`id` = "1" AND `id` = "1"', $this->model()->getWhere([1, 2]));
     }
 
-    public function testArrayValuesAreInterpolatedWithoutEscaping(): void
+    public function testArrayValuesAreEscaped(): void
     {
-        self::assertSame('`name` = "say "hi""', $this->model()->getWhere(['name' => 'say "hi"']));
+        // Antes os valores entravam sem escape ('`name` = "say "hi""').
+        self::assertSame('`name` = "say \\"hi\\""', $this->model()->getWhere(['name' => 'say "hi"']));
+        self::assertSame("`name` = \"d\\'avila \\\\ x\"", $this->model()->getWhere(['name' => "d'avila \\ x"]));
     }
 
-    public function testArrayColumnNamesAreWrappedInBackticksWithoutValidation(): void
+    public function testListArrayValuesAreEscaped(): void
+    {
+        self::assertSame('`id` = "7\\""', $this->model()->getWhere(['7"']));
+    }
+
+    public function testArrayColumnNamesAreWrappedInBackticks(): void
     {
         self::assertSame('`a.b` = "1"', $this->model()->getWhere(['a.b' => 1]));
+    }
+
+    public function testBacktickInArrayColumnNameIsDoubled(): void
+    {
+        self::assertSame('`a``b` = "1"', $this->model()->getWhere(['a`b' => 1]));
     }
 
     public function testExplicitStructureArgumentOverridesModelStructure(): void

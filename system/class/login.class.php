@@ -112,13 +112,14 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
             
             if( !$this->configured ) $this->configure( $this->userTable, $this->typeTable);
 
-				//Valores interpolados no SQL são escapados com real_escape_string.
-				$login = $this->connection->escape( $login );
-				$type  = $this->getType( $type );
+				//exist() escapa o valor; o SQL montado abaixo usa a versão escapada.
+				$rawLogin = $login;
+				$login    = $this->connection->escape( $login );
+				$type     = $this->getType( $type );
 
 				//Verifica se o usuario é valido (pelo campo login e, se useEmail, pelo campo email)
-				if( !$this->connection->exist( $this->userTable, "login", $login, "type in " . $type ) ){
-					if( !$this->useEmail || !$this->connection->exist( $this->userTable, "email", $login, "type in " . $type ) )
+				if( !$this->connection->exist( $this->userTable, "login", $rawLogin, "type in " . $type ) ){
+					if( !$this->useEmail || !$this->connection->exist( $this->userTable, "email", $rawLogin, "type in " . $type ) )
 								throw( new Exception( LGN_LOGIN_INVALID, 0x9001 ) );
 				}
 				
@@ -349,7 +350,7 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
                         !empty( $_COOKIE[ $this->cookieName( $a, 'Email' ) ] ) ){
 
                         $typeCod = $this->getType( $a );
-                        $cod     = $this->connection->escape( $_COOKIE[ $this->cookieName( $a, 'Cod' ) ] );
+                        $cod     = $_COOKIE[ $this->cookieName( $a, 'Cod' ) ];   //exist() escapa o valor
 
                         if( $this->connection->exist( $this->userTable, 'id', $cod, "type IN " . $typeCod . ' AND ' . $this->statusField . '=' . $this->statusList['ACTIVE'] ) ){
                            $n++;

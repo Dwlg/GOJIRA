@@ -2,6 +2,7 @@
 
 namespace Gojira\Tests\Unit\Model;
 
+use Gojira\Tests\Support\Deprecations;
 use Gojira\Tests\Support\TableColumn;
 use PHPUnit\Framework\TestCase;
 
@@ -11,6 +12,13 @@ use PHPUnit\Framework\TestCase;
 */
 abstract class ModelTestCase extends TestCase
 {
+    use Deprecations;
+
+    protected function setUp(): void
+    {
+        $this->resetModelDeprecations();
+    }
+
     protected function globals(): \stdClass
     {
         $globals                 = new \stdClass();

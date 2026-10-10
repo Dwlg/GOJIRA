@@ -55,9 +55,30 @@ final class GetDataTest extends ModelTestCase
         self::assertSame(self::SELECT . ' WHERE 1=1 ORDER BY `name`, `id`', $this->getDataSql('', ['name', 'id']));
     }
 
-    public function testStringSortIsConcatenatedVerbatim(): void
+    public function testStringSortWithColumnListIsConcatenatedVerbatimWithoutDeprecation(): void
     {
-        self::assertSame(self::SELECT . ' WHERE 1=1 ORDER BY name DESC, id', $this->getDataSql('', 'name DESC, id'));
+        [$sql, $deprecations] = $this->withDeprecations(function () {
+            return $this->getDataSql('', 'name DESC, id');
+        });
+
+        self::assertSame(self::SELECT . ' WHERE 1=1 ORDER BY name DESC, id', $sql);
+        self::assertSame([], $deprecations);
+    }
+
+    public function testFreeExpressionSortIsKeptButDeprecated(): void
+    {
+        [$sql, $deprecations] = $this->withDeprecations(function () {
+            return $this->getDataSql('', 'LENGTH(name) DESC');
+        });
+
+        self::assertSame(self::SELECT . ' WHERE 1=1 ORDER BY LENGTH(name) DESC', $sql);
+        self::assertCount(1, $deprecations);
+        self::assertStringContainsString('sort as a free SQL expression', $deprecations[0]);
+    }
+
+    public function testBacktickInArraySortColumnIsDoubled(): void
+    {
+        self::assertSame(self::SELECT . ' WHERE 1=1 ORDER BY `a``b`', $this->getDataSql('', ['a`b']));
     }
 
     /** @dataProvider limits */
@@ -73,9 +94,37 @@ final class GetDataTest extends ModelTestCase
             'string'            => ['5, 10', ' LIMIT 5, 10'],
             'array com offset'  => [[5, 10], ' LIMIT 5, 10'],
             'array sem offset'  => [[5], ' LIMIT 5'],
+            'array de strings'  => [['5', '10'], ' LIMIT 5, 10'],
+            'string numérica'   => ['7', ' LIMIT 7'],
+            'string sem espaço' => ['5,10', ' LIMIT 5, 10'],
             'vazio'             => ['', ''],
             'zero'              => [0, ''],
-            'texto livre'       => ['5 OFFSET 1', ' LIMIT 5 OFFSET 1'],
+            'null'              => [null, ''],
+        ];
+    }
+
+    /** @dataProvider invalidLimits */
+    public function testInvalidLimitThrows($limit): void
+    {
+        // Antes qualquer texto era concatenado depois do LIMIT.
+        $this->expectException(\ModelException::class);
+        $this->expectExceptionCode(0x2016);
+
+        $this->model()->getData('', '', $limit);
+    }
+
+    public function invalidLimits(): array
+    {
+        return [
+            'texto livre'        => ['5 OFFSET 1'],
+            'negativo'           => [-1],
+            'string negativa'    => ['-1'],
+            'decimal'            => [1.5],
+            'texto'              => ['abc'],
+            'três partes'        => ['1, 2, 3'],
+            'array com texto'    => [[5, 'x']],
+            'array com três'     => [[1, 2, 3]],
+            'array vazio'        => [[]],
         ];
     }
 
@@ -112,12 +161,41 @@ final class GetDataTest extends ModelTestCase
         self::assertSame('DELETE FROM `recording` WHERE id="3"', $model->lastRecorded());
     }
 
-    public function testDeleteWithEmptyKeyTargetsAllRows(): void
+    /** @dataProvider emptyDeleteKeys */
+    public function testDeleteWithoutKeyThrows($key): void
+    {
+        // Antes delete('') montava "WHERE 1=1" e apagava a tabela inteira;
+        // delete(null) e delete([]) montavam um SQL inválido.
+        $model = $this->model();
+
+        try {
+            $model->delete($key);
+            self::fail('delete sem chave deveria lançar ModelException');
+        } catch (\ModelException $e) {
+            self::assertSame(0x2018, $e->getCode());
+        }
+        self::assertSame([], $model->recorded);
+    }
+
+    public function emptyDeleteKeys(): array
+    {
+        return ['string vazia' => [''], 'null' => [null], 'array vazio' => [[]]];
+    }
+
+    public function testDeleteAllRowsRequiresAnExplicitCondition(): void
     {
         $model = $this->model();
-        $model->delete('');
+        $model->delete('1=1');
 
         self::assertSame('DELETE FROM `recording` WHERE 1=1', $model->lastRecorded());
+    }
+
+    public function testDeleteEscapesArrayValues(): void
+    {
+        $model = $this->model();
+        $model->delete(['name' => 'a"b']);
+
+        self::assertSame('DELETE FROM `recording` WHERE `name` = "a\\"b"', $model->lastRecorded());
     }
 
     public function testDeleteWithStringKeyUsesItAsWhere(): void

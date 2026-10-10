@@ -9,8 +9,17 @@
 			
 			
 			//Remove conteudo que pode ser usado para sql_injection de uma query
+			//@deprecated Não protege contra injeção (não escapa aspas) e altera dados legítimos.
+			//            Use Connection::escape() para valores entre aspas, ou run()/runAll()/runGet().
+			//            O comportamento continua o mesmo até a remoção na 2.0.
 		   function antiInjection($str, $lTags = false, $lHtml = false) {
-	   	
+
+				static $warned = false;
+				if( !$warned ){
+					$warned = true;
+					trigger_error( 'Tool_Security::antiInjection() is deprecated; use Connection::escape() or run()/runAll()/runGet()', E_USER_DEPRECATED );
+				}
+
 				if( !$lHtml ) {
 			      
 					$str = preg_replace("/(alter table|insert into|delete from|update table|drop table|show tables|\*|--|\\\\)/i","", $str ?? '');
