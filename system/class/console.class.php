@@ -13,7 +13,7 @@
 //CONSTANTES DA CLASSE
 
 
-    	require_once( 'tool.class.php' );			//Tools
+    	require_once( __DIR__ . '/tool.class.php' );			//Tools
 		
     
 		class Console extends GojiraCore{
@@ -26,6 +26,19 @@
             $this->tools = $tools;
 
          }
+
+
+         //O console só roda em CLI e com GOJIRA_ENABLE_CONSOLE (constante ou variável de ambiente)
+         public static function isEnabled( $sapi = PHP_SAPI ){
+
+            if( $sapi !== 'cli' ) return false;
+
+            if( defined( 'GOJIRA_ENABLE_CONSOLE' ) ) return (bool) constant( 'GOJIRA_ENABLE_CONSOLE' );
+
+            $env = getenv( 'GOJIRA_ENABLE_CONSOLE' );
+
+            return $env !== false && in_array( strtolower( trim( $env ) ), array( '1', 'true', 'on', 'yes' ), true );
+         }
          
 			
 			public function execute( $cmd ){
@@ -35,7 +48,7 @@
 				$command = strtolower( $command );
 				
 				if( method_exists( $this, $command ) ){
-					return nl2br(call_user_func_array(array($this, $command), array( $param, count( $param ) ) ));
+					return nl2br( (string) call_user_func_array(array($this, $command), array( $param, count( $param ) ) ));
 				} else {
 					return "Comando não identificado";
 				}
@@ -45,9 +58,6 @@
 			
 			private function cmd_split( $cmd ){
 				
-				if (get_magic_quotes_gpc()) {
-					$cmd = stripslashes( $cmd );
-				}
 				
 				$asp = false;
 				$ret = array();
@@ -78,14 +88,15 @@
 				}
 				
 				foreach( $ret as $i => $a ){
-					$ret[ $i ] = preg_replace_callback( "#[\$]((?:[^[]|\[(?!/?indent])|(?R))+)[\$]#", create_function( '$matches', '
+					$ret[ $i ] = preg_replace_callback( "#[\$]((?:[^[]|\[(?!/?indent])|(?R))+)[\$]#", function( $matches ){
 																			foreach( $matches as $a ){
 																				if( substr($a,0,1) == substr( $a,-1,1) && substr( $a,0,1 ) == "$" ){
 																					$a = "d_" . str_replace( "$", "", $a);
 																					return (isset($_SESSION[$a]) ? $_SESSION[$a] : "");
 																				}
 																			}
-																		'), $a );
+																			return "";
+																		}, $a );
 				}
 				
 				
