@@ -1,7 +1,8 @@
 # Arquivos do framework não são servidos pela web.
 # Só o thumb.php (e os arquivos estáticos fora de vendor/) continuam acessíveis.
 
-<FilesMatch "\.(php|phtml|phar|inc)$">
+# Scripts PHP em qualquer variação de extensão, sem diferenciar maiúsculas.
+<FilesMatch "(?i)\.(php[0-9]?|phtml|pht|phar|inc)$">
    <IfModule mod_authz_core.c>
       Require all denied
    </IfModule>
@@ -22,7 +23,17 @@
 </Files>
 
 # vendor/ inteiro fica fechado (README, composer.json, exemplos).
-<IfModule mod_rewrite.c>
-   RewriteEngine On
-   RewriteRule ^vendor(/|$) - [F,L]
+# Apache 2.4: <If> com Require, sem depender do mod_rewrite.
+<IfModule mod_authz_core.c>
+   <If "%{REQUEST_URI} =~ m#/vendor(/|$)#i">
+      Require all denied
+   </If>
+</IfModule>
+# Apache 2.2 (sem <If>): mod_rewrite quando houver. Os .php de vendor/ já
+# ficam fechados pelo FilesMatch acima em qualquer versão.
+<IfModule !mod_authz_core.c>
+   <IfModule mod_rewrite.c>
+      RewriteEngine On
+      RewriteRule ^vendor(/|$) - [F,L]
+   </IfModule>
 </IfModule>
