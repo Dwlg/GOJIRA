@@ -4,6 +4,7 @@ namespace Gojira\Tests\Integration\Auth;
 
 use Gojira\Tests\Support\AuthFixtures;
 use Gojira\Tests\Support\IntegrationTestCase;
+use Gojira\Tests\Support\RecordingGuard;
 use Gojira\Tests\Support\RecordingLogin;
 
 /**
@@ -46,6 +47,8 @@ final class LoginHardeningTest extends IntegrationTestCase
     protected function tearDown(): void
     {
         restore_error_handler();
+        \Gojira_RequestScheme::reset();
+        unset($_SERVER['HTTP_X_FORWARDED_PROTO'], $_SERVER['REMOTE_ADDR']);
         $_SESSION = [];
         $_COOKIE  = [];
         unset($_SERVER['HTTPS']);
@@ -185,6 +188,56 @@ final class LoginHardeningTest extends IntegrationTestCase
         self::assertCount(1, $this->deprecations);
         self::assertStringContainsString('Login::setCookie(true)', $this->deprecations[0]);
         self::assertStringContainsString('Gojira_RememberTokenStore', $this->deprecations[0]);
+    }
+
+    // Secure atrás de proxy
+
+    public function testIdentityCookiesSecureBehindTrustedProxy(): void
+    {
+        \Gojira_RequestScheme::configure(false, ['10.0.0.5']);
+        $_SERVER['REMOTE_ADDR']            = '10.0.0.5';
+        $_SERVER['HTTP_X_FORWARDED_PROTO'] = 'https';
+        $this->auth->setCookie(true);
+        $this->auth->login('ana', 'segredo', 'ADM');
+
+        foreach ($this->auth->cookies as $cookie) {
+            self::assertTrue($cookie['options']['secure'], $cookie['name']);
+        }
+    }
+
+    public function testForwardedProtoFromUnknownAddressDoesNotMarkSecure(): void
+    {
+        \Gojira_RequestScheme::configure(false, ['10.0.0.5']);
+        $_SERVER['REMOTE_ADDR']            = '203.0.113.9';
+        $_SERVER['HTTP_X_FORWARDED_PROTO'] = 'https';
+        $this->auth->setCookie(true);
+        $this->auth->login('ana', 'segredo', 'ADM');
+
+        self::assertFalse($this->auth->cookies[0]['options']['secure']);
+    }
+
+    public function testRememberCookieFollowsForcedSecure(): void
+    {
+        \Gojira_RequestScheme::configure(true);
+        $table = $this->createTable(
+            'selector CHAR(24) NOT NULL PRIMARY KEY, validator_hash CHAR(64) NOT NULL, user_id INT NOT NULL,'
+            . ' expires_at INT NOT NULL, user_agent VARCHAR(255) NULL, created_at INT NOT NULL'
+        );
+        $guard = new RecordingGuard($this->auth, 'ADM', new \Gojira_TableRememberTokenStore(self::$connection, $table));
+        $guard->attempt('ana', 'segredo', [], true);
+
+        self::assertTrue($guard->lastCookie()['options']['secure']);
+    }
+
+    // Troca de sessão sem sessão ativa
+
+    public function testNoWarningWhenThereIsNoActiveSession(): void
+    {
+        self::assertNotSame(PHP_SESSION_ACTIVE, session_status());
+        $this->auth->forceHeadersSent = true;
+
+        // Um E_USER_WARNING aqui viraria exceção no PHPUnit.
+        self::assertEquals($this->anaId, $this->auth->login('ana', 'segredo', 'ADM'));
     }
 
     // Senha temporária

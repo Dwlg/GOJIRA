@@ -126,4 +126,59 @@ final class SessionRegenerationTest extends IntegrationTestCase
         self::assertEquals($this->anaId, $this->auth->login('ana', 'segredo', 'ADM'));
         self::assertTrue($_SESSION['ADMLogged']);
     }
+
+    public function testOutputBeforeLoginKeepsTheIdAndWarns(): void
+    {
+        $before = $this->startRealSession();
+        $log    = (string) tempnam(sys_get_temp_dir(), 'gjlog');
+        $prev   = ini_set('error_log', $log);
+        $warnings = [];
+        set_error_handler(static function (int $errno, string $errstr) use (&$warnings): bool {
+            $warnings[] = $errstr;
+
+            return true;
+        }, E_USER_WARNING);
+        $this->auth->forceHeadersSent = true;
+
+        try {
+            $code = $this->auth->login('ana', 'segredo', 'ADM');
+        } finally {
+            restore_error_handler();
+            ini_set('error_log', (string) $prev);
+        }
+        $logged = (string) file_get_contents($log);
+        @unlink($log);
+
+        self::assertEquals($this->anaId, $code, 'o login acontece');
+        self::assertSame($before, session_id(), 'o id não muda sem poder enviar o cookie novo');
+        self::assertCount(1, $warnings);
+        self::assertStringContainsString('saida.php:7', $warnings[0]);
+        self::assertStringContainsString('id de sessão não trocado', $logged);
+    }
+
+    public function testOutputBeforeLogoutWarns(): void
+    {
+        $this->startRealSession();
+        $this->auth->login('ana', 'segredo', 'ADM');
+        $log      = (string) tempnam(sys_get_temp_dir(), 'gjlog');
+        $prev     = ini_set('error_log', $log);
+        $warnings = [];
+        set_error_handler(static function (int $errno, string $errstr) use (&$warnings): bool {
+            $warnings[] = $errstr;
+
+            return true;
+        }, E_USER_WARNING);
+        $this->auth->forceHeadersSent = true;
+
+        try {
+            $this->auth->logout('ADM');
+        } finally {
+            restore_error_handler();
+            ini_set('error_log', (string) $prev);
+            @unlink($log);
+        }
+
+        self::assertCount(1, $warnings);
+        self::assertArrayNotHasKey('ADMCod', $_SESSION);
+    }
 }
