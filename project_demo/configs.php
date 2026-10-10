@@ -3,12 +3,18 @@
 define('SYSDIR_NAME', '../system/');
 require_once('constants.php');
 
-   @session_start();
+   //A sessão é aberta pelo framework (system/init.php). Com GOJIRA_NO_SESSION_AUTOSTART
+   //ela fica sob demanda; ver system/class/session.class.php.
+   if( !( defined('GOJIRA_NO_SESSION_AUTOSTART') && GOJIRA_NO_SESSION_AUTOSTART ) ) @session_start();
 
    setlocale(LC_MONETARY, 'pt_BR');
    date_default_timezone_set('America/Sao_Paulo');
 
    error_reporting( E_ALL );
+
+   //Erros na tela só em desenvolvimento. Fora de DEV eles vão só para o log.
+   ini_set( 'display_errors', ENVIRONMENT === 'DEV' ? '1' : '0' );
+   ini_set( 'log_errors', '1' );
 
    //Remove o cache do SMARTY
    define('TPL_CACHE',0);
