@@ -27,6 +27,12 @@ final class LoginTest extends IntegrationTestCase
         $_SESSION = [];
         $_COOKIE  = [];
 
+        // setCookie(true) avisa uma vez que o modo cookie está obsoleto; o aviso
+        // é testado em LoginHardeningTest.
+        set_error_handler(static function (): bool {
+            return true;
+        }, E_USER_DEPRECATED);
+
         $this->typeTable = $this->createTable(
             'id INT PRIMARY KEY, shortcode VARCHAR(20) NOT NULL, name VARCHAR(50) NOT NULL'
         );
@@ -49,6 +55,7 @@ final class LoginTest extends IntegrationTestCase
 
     protected function tearDown(): void
     {
+        restore_error_handler();
         $_SESSION = [];
         $_COOKIE  = [];
         parent::tearDown();
