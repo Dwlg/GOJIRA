@@ -57,6 +57,10 @@
             if( isset( $decl['requires'] ) ) $rules['requires'] = $decl['requires'];
          }
 
+         //'requires' => 'ADM' vale como ['ADM']; 'public' => 'index' como ['index'].
+         if( ! is_array( $rules['requires'] ) ) $rules['requires'] = ( $rules['requires'] === '' || $rules['requires'] === null ) ? [] : [ $rules['requires'] ];
+         if( $rules['public'] !== true && ! is_array( $rules['public'] ) ) $rules['public'] = ( $rules['public'] === '' || $rules['public'] === null || $rules['public'] === false ) ? [] : [ $rules['public'] ];
+
          return $rules;
       }
 

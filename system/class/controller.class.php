@@ -2,6 +2,7 @@
 
       //Controle de acesso deny-by-default (opt-in). Ver docs/specs/auth-redesign-spec.md (Fase 3).
       require_once( __DIR__ . '/auth/accesspolicy.interface.php' );
+      require_once( __DIR__ . '/auth/mapaccesspolicy.class.php' );
 
 		abstract class Controller extends GojiraCore{
 
