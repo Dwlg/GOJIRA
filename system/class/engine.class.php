@@ -51,7 +51,7 @@
                return $globals->smarty->fetch( $file );
             } elseif( is_object($objData) || is_array($objData) ){
                self::sendHeader( 'Content-Type: application/json; charset=utf-8' );   //sempre: JSON servido como text/html permite XSS
-               return json_encode( $objData );
+               return self::encodeJson( $objData );
             } elseif( !is_object( $objData ) ){
                return $objData;
             }
@@ -160,7 +160,7 @@
 
          if( is_object($objData) || is_array($objData) ){
             self::sendHeader( 'Content-Type: application/json; charset=utf-8' );   //sempre: JSON servido como text/html permite XSS
-            return json_encode( $objData );
+            return self::encodeJson( $objData );
          }
 
          return $objData;
@@ -192,7 +192,24 @@
          self::sendHeader( 'Content-Type: application/json; charset=utf-8' );
 
          //JSON_HEX_TAG: nenhum "<" ou ">" literal no corpo, nem no detail.
-         return json_encode( [ 'error' => $error ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_PARTIAL_OUTPUT_ON_ERROR );
+         return json_encode( [ 'error' => $error ], self::JSON_FLAGS | JSON_PARTIAL_OUTPUT_ON_ERROR );
+      }
+
+
+      //< > & ' " saem como \u00XX (o JSON nunca forma HTML se for parar numa página),
+      //e UTF-8 inválido vira U+FFFD em vez de derrubar a resposta.
+      const JSON_FLAGS = JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE;
+
+      //Corpo JSON de sucesso. Uma falha de codificação (profundidade, INF/NAN,
+      //recursão) vira exceção e segue o caminho de erro, nunca um 200 vazio.
+      public static function encodeJson( $data ): string {
+
+         $json = json_encode( $data, self::JSON_FLAGS );
+         if( $json === false ){
+            throw( new Exception( 'JSON encoding failed: ' . json_last_error_msg() ) );
+         }
+
+         return $json;
       }
 
 
