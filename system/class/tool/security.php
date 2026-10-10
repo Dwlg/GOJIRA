@@ -132,15 +132,18 @@
          
          
          
-         //Encripta uma string com AES-256-GCM (openssl). A chave é derivada com encrypt_key().
+         //Encripta uma string com AES-256-GCM (openssl). A chave é derivada com encrypt_key()
+         //e precisa ter ao menos 16 bytes. $aad (opcional) é autenticado, mas não cifrado:
+         //o mesmo valor precisa ser passado ao decrypt().
          //Retorna base64( iv[12] . tag[16] . texto cifrado ).
-         function encrypt( $key, $value ){
+         function encrypt( $key, $value, $aad = '' ){
 
             $this->requireOpenssl();
+            $this->requireKey( $key );
 
             $iv  = random_bytes( 12 );
             $tag = '';
-            $ct  = openssl_encrypt( (string) $value, 'aes-256-gcm', $this->encrypt_key( $key ), OPENSSL_RAW_DATA, $iv, $tag, '', 16 );
+            $ct  = openssl_encrypt( (string) $value, 'aes-256-gcm', $this->encrypt_key( $key ), OPENSSL_RAW_DATA, $iv, $tag, (string) $aad, 16 );
 
             if( $ct === false ){
                throw new RuntimeException( 'Falha ao encriptar com AES-256-GCM.' );
@@ -151,10 +154,11 @@
 
 
          //Desencripta um valor gerado por encrypt(). Retorna false se o valor
-         //estiver corrompido, adulterado ou se a chave estiver errada.
-         function decrypt( $key, $value ){
+         //estiver corrompido, adulterado, ou se a chave ou o $aad estiverem errados.
+         function decrypt( $key, $value, $aad = '' ){
 
             $this->requireOpenssl();
+            $this->requireKey( $key );
 
             $raw = base64_decode( (string) $value, true );
             if( $raw === false || strlen( $raw ) < 28 ){
@@ -165,7 +169,16 @@
             $tag = substr( $raw, 12, 16 );
             $ct  = substr( $raw, 28 );
 
-            return openssl_decrypt( $ct, 'aes-256-gcm', $this->encrypt_key( $key ), OPENSSL_RAW_DATA, $iv, $tag );
+            return openssl_decrypt( $ct, 'aes-256-gcm', $this->encrypt_key( $key ), OPENSSL_RAW_DATA, $iv, $tag, (string) $aad );
+         }
+
+
+         //Chave vazia ou curta não é aceita
+         private function requireKey( $key ){
+
+            if( ! is_string( $key ) || strlen( $key ) < 16 ){
+               throw new InvalidArgumentException( 'A chave de encrypt()/decrypt() precisa ter ao menos 16 bytes.' );
+            }
          }
 
 
