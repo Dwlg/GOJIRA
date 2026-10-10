@@ -71,7 +71,7 @@
          if( count( $parts ) !== 2 ) return null;
 
          [ $selector, $validator ] = $parts;
-         if( $selector === '' || $validator === '' ) return null;
+         if( ! self::plausiblePart( $selector ) || ! self::plausiblePart( $validator ) ) return null;
 
          $record = $this->rememberStore->findBySelector( $selector );
          if( $record === null ) return null;  //não achou/expirou -> anônimo
@@ -151,6 +151,18 @@
          }
       }
 
+      //Selector e validator vazios ou longos demais são descartados sem consultar
+      //o store (o padrão gera 24 e 64 caracteres).
+      private static function plausiblePart( string $value ): bool {
+         return $value !== '' && strlen( $value ) <= 128;
+      }
+
+      //Único ponto que envia o cookie de remember-me (subclasses podem trocar,
+      //por exemplo para testes ou para outro transporte).
+      protected function sendCookie( string $name, string $value, array $options ): bool {
+         return setcookie( $name, $value, $options );
+      }
+
       private function issueRememberCookie( $userId ){
 
          [ $selector, $validator ] = $this->rememberStore->issue( $userId, $this->rememberTtl );
@@ -163,7 +175,7 @@
 
       private function setRememberCookie( string $value, int $expires ){
 
-         setcookie( $this->rememberCookie, $value, [
+         $this->sendCookie( $this->rememberCookie, $value, [
             'expires'  => $expires,
             'path'     => '/',
             'secure'   => $this->isHttps(),
@@ -176,7 +188,7 @@
 
       private function clearRememberCookie(){
 
-         setcookie( $this->rememberCookie, '', [
+         $this->sendCookie( $this->rememberCookie, '', [
             'expires'  => time() - 3600,
             'path'     => '/',
             'secure'   => $this->isHttps(),
