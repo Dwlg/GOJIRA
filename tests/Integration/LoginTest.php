@@ -260,23 +260,101 @@ final class LoginTest extends IntegrationTestCase
         return !empty(password_get_info($hash)['algo']);
     }
 
-    public function testLegacyHashAuthenticatesAndIsRehashedWithPasswordHash(): void
+    /** @var string|null */
+    private $errorLogFile;
+
+    /** @var string|false */
+    private $previousErrorLog = false;
+
+    /** Desvia o error_log para um arquivo temporário e devolve o caminho. */
+    private function captureErrorLog(): string
+    {
+        $this->errorLogFile     = (string) tempnam(sys_get_temp_dir(), 'gjlog');
+        $this->previousErrorLog = ini_set('error_log', $this->errorLogFile);
+
+        return $this->errorLogFile;
+    }
+
+    /** @after */
+    public function restoreErrorLog(): void
+    {
+        if ($this->errorLogFile !== null) {
+            ini_set('error_log', (string) $this->previousErrorLog);
+            @unlink($this->errorLogFile);
+            $this->errorLogFile = null;
+        }
+    }
+
+    private function lastCommandIsNotUpdate(): void
+    {
+        self::assertStringNotContainsString('UPDATE', (string) self::$connection->get_lastCommand(), 'o login não deve regravar a senha');
+    }
+
+    // Regravação desligada (padrão da 1.x)
+
+    public function testRehashIsOffByDefault(): void
+    {
+        self::assertFalse(LGN_PASSWORD_REHASH);
+    }
+
+    public function testLegacyHashAuthenticatesAndIsKeptByDefault(): void
     {
         $legacy = $this->storedHash('ana');
         self::assertSame($this->login->toPassword('segredo'), $legacy);
 
+        self::assertEquals($this->codes['ana'], $this->login->login('ana', 'segredo', 'admin'));
+        $this->lastCommandIsNotUpdate();
+        self::assertSame($legacy, $this->storedHash('ana'));
+    }
+
+    public function testModernHashAuthenticatesWithRehashOff(): void
+    {
+        $this->login->changePass($this->codes['ana'], 'segredo');
+        self::assertTrue(self::isModernHash($this->storedHash('ana')));
+
+        self::assertEquals($this->codes['ana'], $this->login->login('ana', 'segredo', 'admin'));
+    }
+
+    public function testServerSideHashFlagWithLegacyHashAndRehashOff(): void
+    {
+        $legacy = $this->storedHash('ana');
+
+        self::assertEquals($this->codes['ana'], $this->login->login('ana', $legacy, 'admin', true));
+        self::assertSame($legacy, $this->storedHash('ana'));
+    }
+
+    // Regravação ligada (opt-in)
+
+    public function testLegacyHashIsRehashedWithPasswordHashWhenEnabled(): void
+    {
+        $legacy = $this->storedHash('ana');
+
+        $this->login->setPasswordRehash(true);
         self::assertEquals($this->codes['ana'], $this->login->login('ana', 'segredo', 'admin'));
 
         $stored = $this->storedHash('ana');
         self::assertNotSame($legacy, $stored);
         self::assertTrue(self::isModernHash($stored), 'o hash legado deve ser regravado com password_hash');
         self::assertTrue(password_verify('segredo', $stored));
+        self::assertSame(\Gojira_BcryptHasher::DEFAULT_COST, password_get_info($stored)['options']['cost']);
+    }
+
+    public function testSetPasswordRehashCanBeTurnedOffAgain(): void
+    {
+        $legacy = $this->storedHash('ana');
+
+        $this->login->setPasswordRehash(true);
+        $this->login->setPasswordRehash(false);
+        $this->login->login('ana', 'segredo', 'admin');
+
+        self::assertSame($legacy, $this->storedHash('ana'));
     }
 
     public function testRehashTouchesOnlyTheAuthenticatedUser(): void
     {
         $before = $this->storedHash('o"neil');
 
+        $this->login->setPasswordRehash(true);
         $this->login->login('ana', 'segredo', 'admin');
 
         self::assertSame($before, $this->storedHash('o"neil'));
@@ -284,16 +362,19 @@ final class LoginTest extends IntegrationTestCase
 
     public function testModernHashAuthenticatesAndIsKept(): void
     {
+        $this->login->setPasswordRehash(true);
         $this->login->login('ana', 'segredo', 'admin');
         $modern   = $this->storedHash('ana');
         $_SESSION = [];
 
         self::assertEquals($this->codes['ana'], $this->login->login('ana', 'segredo', 'admin'));
+        $this->lastCommandIsNotUpdate();
         self::assertSame($modern, $this->storedHash('ana'), 'hash moderno atualizado não é regravado');
     }
 
     public function testWrongPasswordAgainstModernHashIsRejected(): void
     {
+        $this->login->setPasswordRehash(true);
         $this->login->login('ana', 'segredo', 'admin');
 
         $this->expectExceptionCode(0x9003);
@@ -302,6 +383,7 @@ final class LoginTest extends IntegrationTestCase
 
     public function testModernHashSentThroughFormDoesNotAuthenticate(): void
     {
+        $this->login->setPasswordRehash(true);
         $this->login->login('ana', 'segredo', 'admin');
 
         $this->expectExceptionCode(0x9003);
@@ -311,6 +393,7 @@ final class LoginTest extends IntegrationTestCase
     public function testFailedLoginDoesNotRehash(): void
     {
         $legacy = $this->storedHash('ana');
+        $this->login->setPasswordRehash(true);
 
         try {
             $this->login->login('ana', 'outra', 'admin');
@@ -322,13 +405,27 @@ final class LoginTest extends IntegrationTestCase
         self::assertSame($legacy, $this->storedHash('ana'));
     }
 
-    public function testServerSideHashFlagDoesNotRehash(): void
+    /**
+     * Login por $pwd_hash = true (hash calculado pelo servidor) antes e depois
+     * da migração: ele compara o hash gravado, então depois da migração só o
+     * hash novo vale.
+     */
+    public function testServerSideHashFlagBeforeAndAfterRehash(): void
     {
         $legacy = $this->storedHash('ana');
+        $this->login->setPasswordRehash(true);
 
+        self::assertEquals($this->codes['ana'], $this->login->login('ana', $legacy, 'admin', true));
+        self::assertSame($legacy, $this->storedHash('ana'), '$pwd_hash = true não regrava');
+
+        $this->login->login('ana', 'segredo', 'admin');
+        $modern = $this->storedHash('ana');
+        self::assertTrue(self::isModernHash($modern));
+
+        self::assertEquals($this->codes['ana'], $this->login->login('ana', $modern, 'admin', true));
+
+        $this->expectExceptionCode(0x9003);
         $this->login->login('ana', $legacy, 'admin', true);
-
-        self::assertSame($legacy, $this->storedHash('ana'));
     }
 
     public function testOutdatedModernHashIsRehashed(): void
@@ -336,6 +433,7 @@ final class LoginTest extends IntegrationTestCase
         $old = password_hash('segredo', PASSWORD_BCRYPT, ['cost' => 4]);
         self::$connection->run('UPDATE `' . $this->userTable . '` SET password = ? WHERE id = ?', [$old, $this->codes['ana']]);
 
+        $this->login->setPasswordRehash(true);
         $this->login->setHasher(new \Gojira_BcryptHasher(new \Gojira_LegacyHasher(), PASSWORD_BCRYPT, ['cost' => 5]));
         $this->login->login('ana', 'segredo', 'admin');
 
@@ -344,13 +442,50 @@ final class LoginTest extends IntegrationTestCase
         self::assertSame(5, password_get_info($stored)['options']['cost']);
     }
 
+    /**
+     * Outra requisição troca a senha entre a verificação e a regravação: a
+     * regravação não sobrescreve a senha nova, e o login segue válido.
+     */
+    public function testRehashDoesNotOverwritePasswordChangedConcurrently(): void
+    {
+        $log      = $this->captureErrorLog();
+        $userId   = $this->codes['ana'];
+        $table    = $this->userTable;
+        $replaced = password_hash('trocada', PASSWORD_BCRYPT, ['cost' => 4]);
+
+        $this->login->setPasswordRehash(true);
+        $this->login->setHasher(new CallbackHasher(static function () use ($table, $userId, $replaced): void {
+            self::$connection->run('UPDATE `' . $table . '` SET password = ? WHERE id = ?', [$replaced, $userId]);
+        }));
+
+        self::assertEquals($userId, $this->login->login('ana', 'segredo', 'admin'));
+        self::assertSame($replaced, $this->storedHash('ana'));
+        self::assertStringContainsString('não regravado', (string) file_get_contents($log));
+    }
+
+    /** Uma falha ao gravar o hash novo não impede um login válido. */
+    public function testRehashFailureDoesNotBlockLogin(): void
+    {
+        $log    = $this->captureErrorLog();
+        $legacy = $this->storedHash('ana');
+
+        $this->login->setPasswordRehash(true);
+        $this->login->setHasher(new CallbackHasher(null, str_repeat('x', 300)));
+
+        self::assertEquals($this->codes['ana'], $this->login->login('ana', 'segredo', 'admin'));
+        self::assertTrue($_SESSION['ADMLogged']);
+        self::assertSame($legacy, $this->storedHash('ana'));
+        self::assertStringContainsString('falha ao regravar', (string) file_get_contents($log));
+    }
+
     public function testLegacyHasherKeepsLegacyHashes(): void
     {
         $legacy = $this->storedHash('ana');
 
+        $this->login->setPasswordRehash(true);
         $this->login->setHasher(new \Gojira_LegacyHasher());
         self::assertEquals($this->codes['ana'], $this->login->login('ana', 'segredo', 'admin'));
-        self::assertStringNotContainsString('UPDATE', (string) self::$connection->get_lastCommand(), 'o login não deve regravar a senha');
+        $this->lastCommandIsNotUpdate();
 
         self::assertSame($legacy, $this->storedHash('ana'));
     }
@@ -373,5 +508,47 @@ final class LoginTest extends IntegrationTestCase
         $this->login->changePass($this->codes['ana'], 'nova');
 
         self::assertSame($this->login->toPassword('nova'), $this->storedHash('ana'));
+    }
+}
+
+/**
+ * Hasher de teste: valida como o padrão (bcrypt com fallback legado), sempre
+ * pede rehash e, ao gerar o hash novo, roda um callback ou devolve um valor fixo.
+ */
+final class CallbackHasher implements \Gojira_PasswordHasher
+{
+    /** @var callable|null */
+    private $onHash;
+
+    /** @var string|null */
+    private $fixedHash;
+
+    /** @var \Gojira_BcryptHasher */
+    private $inner;
+
+    public function __construct(?callable $onHash, ?string $fixedHash = null)
+    {
+        $this->onHash    = $onHash;
+        $this->fixedHash = $fixedHash;
+        $this->inner     = new \Gojira_BcryptHasher(new \Gojira_LegacyHasher(), PASSWORD_BCRYPT, ['cost' => 4]);
+    }
+
+    public function hash(string $plain): string
+    {
+        if ($this->onHash !== null) {
+            ($this->onHash)();
+        }
+
+        return $this->fixedHash ?? $this->inner->hash($plain);
+    }
+
+    public function verify(string $plain, string $hash): bool
+    {
+        return $this->inner->verify($plain, $hash);
+    }
+
+    public function needsRehash(string $hash): bool
+    {
+        return true;
     }
 }

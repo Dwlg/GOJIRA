@@ -10,6 +10,14 @@ define( 'LGN_DEFAULT_TYPE_TABLE' , 'user_type' );
 define( 'LGN_USE_EMAIL'          , true );
 define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 
+//Regravação do hash de senha no login (hash legado ou com parâmetros desatualizados
+//passa a ser gravado no formato do hasher configurado, ex.: bcrypt).
+//Na 1.x vem DESLIGADA: a verificação aceita os dois formatos, mas nada é regravado.
+//Para ligar, defina LGN_PASSWORD_REHASH como true antes de carregar o framework,
+//ou chame Login::setPasswordRehash(true). Atenção: a regravação é irreversível
+//(o hash legado é substituído). Na 2.0 o padrão passa a ser ligado.
+if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
+
    //Hasher de senha (contrato + implementações). Ver docs/specs/auth-redesign-spec.md
    require_once( __DIR__ . '/auth/passwordhasher.interface.php' );
    require_once( __DIR__ . '/auth/legacyhasher.class.php' );
@@ -35,6 +43,7 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
          private $useCookie   = false;
          private $cookieTime  = LGN_COOKIE_EXPIRE_TIME;
          private $hasher;     //Gojira_PasswordHasher (lazy)
+         private $rehash      = LGN_PASSWORD_REHASH;
          
 			/***   Construtores ***/
 			function __construct(){
@@ -154,12 +163,9 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 						throw( new Exception( LGN_PASS_INVALID, 0x9003 ) );
 					}
 
-					//Migração transparente de hash legado -> moderno
-					if( $this->hasher()->needsRehash( (string)$row['pwd'] ) ){
-						$this->connection->run(
-							'UPDATE `' . $this->userTable . '` SET `password` = ? WHERE `id` = ? LIMIT 1',
-							[ $this->hasher()->hash( (string)$pwd ), $row['code'] ]
-						);
+					//Migração de hash legado/desatualizado (opt-in, ver LGN_PASSWORD_REHASH)
+					if( $this->rehash && $this->hasher()->needsRehash( (string)$row['pwd'] ) ){
+						$this->rehashPassword( $row['code'], (string)$row['pwd'], (string)$pwd );
 					}
 				}
 				
@@ -385,6 +391,32 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 				$this->hasher = $hasher;
 			}
 
+			//Liga ou desliga a regravação do hash no login (padrão: LGN_PASSWORD_REHASH).
+			public function setPasswordRehash( $enabled ){
+				$this->rehash = ( $enabled == true );
+			}
+
+			//Regrava o hash da senha do usuário com o hasher configurado.
+			//Só grava se o hash no banco ainda for o mesmo que foi verificado: outra
+			//requisição que já trocou a senha não é sobrescrita. Uma falha aqui não
+			//impede o login (a senha já foi validada); o motivo vai para o error_log.
+			private function rehashPassword( $userId, $oldHash, $plain ){
+				try {
+					$this->connection->run(
+						'UPDATE `' . $this->userTable . '` SET `password` = ? WHERE `id` = ? AND `password` = ? LIMIT 1',
+						[ $this->hasher()->hash( $plain ), $userId, $oldHash ]
+					);
+					if( $this->connection->affectedRows() !== 1 ){
+						error_log( '[GOJIRA] Login: hash da senha do usuário ' . $userId . ' não regravado (alterado por outra requisição)' );
+						return false;
+					}
+					return true;
+				} catch( Throwable $e ){
+					error_log( '[GOJIRA] Login: falha ao regravar o hash da senha do usuário ' . $userId . ': ' . get_class( $e ) . ' - ' . $e->getMessage() );
+					return false;
+				}
+			}
+
 
 
 			//Criptografa a senha (ESQUEMA LEGADO - mantido por compatibilidade).
@@ -538,6 +570,7 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 			//Altera a senha do usuário (hash moderno + query parametrizada).
 			function changePass( $userId , $pass ){
 
+				//Falha lança ConnectionException (subclasse de Exception), como o query() antigo.
 				$cryptPass = $this->hasher()->hash( (string)$pass );
 				return $this->connection->run(
 					'UPDATE `' . $this->userTable . '` SET `password` = ? WHERE `id` = ? LIMIT 1',
