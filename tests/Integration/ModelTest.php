@@ -111,6 +111,7 @@ final class ModelTest extends IntegrationTestCase
         self::assertSame(['Ana'], $names($model->getData(['status' => 1])));
         self::assertSame(['Bia'], $names($model->getData('', ['name'], [1, 1])));
         self::assertSame(['Caio', 'Ana'], $names($model->getData('', ['id'], '2')));
+        self::assertSame(['Bia', 'Caio'], $names($model->getData('', ['name'], '2 OFFSET 1')));
     }
 
     public function testGetDataCanIndexByPrimaryKey(): void

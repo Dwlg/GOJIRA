@@ -531,9 +531,9 @@ define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
             $ret = array();
             $sql = 'select ' . $field . ' AS a from ' . $table . ' where ' . $compare;
             
-            //O limite aceita só inteiro ou "n, m"; o resto lança exceção
+            //O limite aceita só inteiro, "n, m" ou "n OFFSET m"; o resto lança exceção
             if( $max > 0 || is_string( $max ) ){
-               if( !( (is_int( $max ) && $max > 0) || (is_string( $max ) && preg_match( '/\A\s*\d+\s*(,\s*\d+\s*)?\z/', $max )) ) ){
+               if( !( (is_int( $max ) && $max > 0) || (is_string( $max ) && preg_match( '/\A\s*\d+\s*((,\s*|\s+OFFSET\s+)\d+\s*)?\z/i', $max )) ) ){
                   throw( new Exception( sprintf(DB_CONNECTION_INVALID_PARAMETER, 'GETVALUE') ) );
                }
                $sql .= ' limit ' . $max;

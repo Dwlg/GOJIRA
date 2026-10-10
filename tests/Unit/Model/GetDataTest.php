@@ -97,6 +97,8 @@ final class GetDataTest extends ModelTestCase
             'array de strings'  => [['5', '10'], ' LIMIT 5, 10'],
             'string numérica'   => ['7', ' LIMIT 7'],
             'string sem espaço' => ['5,10', ' LIMIT 5, 10'],
+            'OFFSET'            => ['5 OFFSET 10', ' LIMIT 5 OFFSET 10'],
+            'offset minúsculo'  => [' 5  offset 10 ', ' LIMIT 5 OFFSET 10'],
             'vazio'             => ['', ''],
             'zero'              => [0, ''],
             'null'              => [null, ''],
@@ -116,7 +118,9 @@ final class GetDataTest extends ModelTestCase
     public function invalidLimits(): array
     {
         return [
-            'texto livre'        => ['5 OFFSET 1'],
+            'texto livre'        => ['5 ROWS'],
+            'OFFSET sem número'  => ['5 OFFSET'],
+            'OFFSET e vírgula'   => ['5, 1 OFFSET 2'],
             'negativo'           => [-1],
             'string negativa'    => ['-1'],
             'decimal'            => [1.5],

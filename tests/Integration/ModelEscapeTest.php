@@ -153,7 +153,7 @@ final class ModelEscapeTest extends IntegrationTestCase
 
         $this->expectException(\ModelException::class);
         $this->expectExceptionCode(0x2016);
-        $model->getData('', ['code'], '1 OFFSET 0');
+        $model->getData('', ['code'], '1 ROWS');
     }
 
     public function testFreeSortStillWorksWithDeprecation(): void
@@ -207,8 +207,10 @@ final class ModelEscapeTest extends IntegrationTestCase
         self::assertSame(['a', 'b'], self::$connection->getValue($table, 'name', '1=1', 2));
         self::assertSame(['b'], self::$connection->getValue($table, 'name', '1=1', '1, 1'));
 
+        self::assertSame(['c'], self::$connection->getValue($table, 'name', '1=1', '1 OFFSET 2'));
+
         $this->expectException(\Exception::class);
-        self::$connection->getValue($table, 'name', '1=1', '1 OFFSET 1');
+        self::$connection->getValue($table, 'name', '1=1', '1 ROWS');
     }
 
     public function testTableExistAndFieldExistUseTheConnectedDatabase(): void

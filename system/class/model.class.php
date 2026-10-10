@@ -243,7 +243,11 @@ abstract class Model extends Connection{
 			if( !self::isUnsignedInt( $end ) ){
 				throw( new ModelException( 'Invalid limit', 0x2016 ) );
 			}
-			$sql .= ' LIMIT ' . $this->sqlLimit( $obj->sql[ 'limit' ][0] ) . ((int)$end > 0 ? ', ' . (int)$end : '');
+			$init = $this->sqlLimit( $obj->sql[ 'limit' ][0] );
+			if( (int)$end > 0 && stripos( $init, 'OFFSET' ) !== false ){
+				throw( new ModelException( 'Invalid limit', 0x2016 ) );
+			}
+			$sql .= ' LIMIT ' . $init . ((int)$end > 0 ? ', ' . (int)$end : '');
 		}
 		
 		return $sql;
@@ -832,8 +836,12 @@ abstract class Model extends Connection{
 	}
 	
 	
-	//Normaliza um LIMIT: inteiro, "n", "n, m" ou [n] / [n, m]. O resto lança ModelException.
+	//Normaliza um LIMIT: inteiro, "n", "n, m", "n OFFSET m" ou [n] / [n, m]. O resto lança ModelException.
 	protected function sqlLimit( $limit ){
+		
+		if( is_string( $limit ) && preg_match( '/\A\s*(\d+)\s+OFFSET\s+(\d+)\s*\z/i', $limit, $m ) ){
+			return (int)$m[1] . ' OFFSET ' . (int)$m[2];
+		}
 		
 		if( is_array( $limit ) ){
 			$parts = array_values( $limit );

@@ -159,6 +159,14 @@ final class MakeCommandTest extends ModelTestCase
         self::assertSame('SELECT id FROM `recording` as `a`  LIMIT 5', $this->command($model));
     }
 
+    public function testLimitAcceptsOffsetForm(): void
+    {
+        $model = $this->model();
+        $model->field('id')->limit('5 OFFSET 2');
+
+        self::assertSame('SELECT id FROM `recording` as `a`  LIMIT 5 OFFSET 2', $this->command($model));
+    }
+
     public function testLimitAcceptsNumericStrings(): void
     {
         $model = $this->model();
@@ -182,7 +190,8 @@ final class MakeCommandTest extends ModelTestCase
     public function invalidLimits(): array
     {
         return [
-            'texto livre'   => ['5 OFFSET 2', 0],
+            'texto livre'   => ['5 ROWS', 0],
+            'OFFSET e fim'  => ['5 OFFSET 2', 10],
             'negativo'      => [-1, 0],
             'fim com texto' => [5, '10 x'],
             'fim negativo'  => [5, -1],
