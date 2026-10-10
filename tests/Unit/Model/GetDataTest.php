@@ -37,7 +37,11 @@ final class GetDataTest extends ModelTestCase
 
     public function testStringKeyIsUsedAsWhere(): void
     {
+        // Caminho legado: continua funcionando e emite E_USER_DEPRECATED (PR do modo estrito).
+        $this->captureDeprecations();
         self::assertSame(self::SELECT . ' WHERE status = 1', $this->getDataSql('status = 1'));
+
+        $this->assertDeprecated('raw SQL string as key');
     }
 
     public function testArrayKey(): void
@@ -188,10 +192,14 @@ final class GetDataTest extends ModelTestCase
 
     public function testDeleteAllRowsRequiresAnExplicitCondition(): void
     {
+        // Caminho legado: continua funcionando e emite E_USER_DEPRECATED (PR do modo estrito).
+        $this->captureDeprecations();
         $model = $this->model();
         $model->delete('1=1');
 
         self::assertSame('DELETE FROM `recording` WHERE 1=1', $model->lastRecorded());
+
+        $this->assertDeprecated('raw SQL string as key');
     }
 
     public function testDeleteEscapesArrayValues(): void
@@ -204,10 +212,14 @@ final class GetDataTest extends ModelTestCase
 
     public function testDeleteWithStringKeyUsesItAsWhere(): void
     {
+        // Caminho legado: continua funcionando e emite E_USER_DEPRECATED (PR do modo estrito).
+        $this->captureDeprecations();
         $model = $this->model();
         $model->delete('status = 0');
 
         self::assertSame('DELETE FROM `recording` WHERE status = 0', $model->lastRecorded());
+
+        $this->assertDeprecated('raw SQL string as key');
     }
 
     public function testGetEmptyRowUsesDefaultsWithoutQuotes(): void

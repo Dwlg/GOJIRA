@@ -118,8 +118,8 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 				$type     = $this->getType( $type );
 
 				//Verifica se o usuario é valido (pelo campo login e, se useEmail, pelo campo email)
-				if( !$this->connection->exist( $this->userTable, "login", $rawLogin, "type in " . $type ) ){
-					if( !$this->useEmail || !$this->connection->exist( $this->userTable, "email", $rawLogin, "type in " . $type ) )
+				if( !$this->connection->exist( $this->userTable, "login", $rawLogin, Gojira_Raw::sql( "type in " . $type ) ) ){
+					if( !$this->useEmail || !$this->connection->exist( $this->userTable, "email", $rawLogin, Gojira_Raw::sql( "type in " . $type ) ) )
 								throw( new Exception( LGN_LOGIN_INVALID, 0x9001 ) );
 				}
 				
@@ -352,7 +352,7 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
                         $typeCod = $this->getType( $a );
                         $cod     = $_COOKIE[ $this->cookieName( $a, 'Cod' ) ];   //exist() escapa o valor
 
-                        if( $this->connection->exist( $this->userTable, 'id', $cod, "type IN " . $typeCod . ' AND ' . $this->statusField . '=' . $this->statusList['ACTIVE'] ) ){
+                        if( $this->connection->exist( $this->userTable, 'id', $cod, Gojira_Raw::sql( "type IN " . $typeCod . ' AND ' . $this->statusField . '=' . $this->statusList['ACTIVE'] ) ) ){
                            $n++;
                         }
                      }
@@ -370,7 +370,7 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
                         !empty( $_SESSION[ $a . 'Email'] ) ){
                            
                         $typeCod = $this->getType( $a );
-                        if( $this->connection->exist( $this->userTable, 'id', $_SESSION[ $a . 'Cod'], "type IN " . $typeCod . ' AND ' . $this->statusField . '=' . $this->statusList['ACTIVE'] ) ){
+                        if( $this->connection->exist( $this->userTable, 'id', $_SESSION[ $a . 'Cod'], Gojira_Raw::sql( "type IN " . $typeCod . ' AND ' . $this->statusField . '=' . $this->statusList['ACTIVE'] ) ) ){
                            $n++;
                         }
                      }

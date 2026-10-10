@@ -35,6 +35,8 @@ class Fixture_Model extends Model
     public function hAnd() { return parent::hAnd(); }
     public function join($type, $table, $comp, $alias = '') { return parent::join($type, $table, $comp, $alias); }
     public function limit($init, $end = 0) { return parent::limit($init, $end); }
+    public function whereRaw($sql, array $params = []) { return parent::whereRaw($sql, $params); }
+    public function havingRaw($sql, array $params = []) { return parent::havingRaw($sql, $params); }
 }
 
 class Recording_Model extends Fixture_Model
@@ -71,6 +73,10 @@ class Recording_Model extends Fixture_Model
 
     function exist($table, $column = '', $value = '', $compare = '')
     {
+        // O saveRow passa o WHERE da chave primária como Gojira_Raw; grava o SQL dele.
+        if ($compare instanceof Gojira_Raw) {
+            $compare = $this->renderRaw($compare);
+        }
         $this->existCalls[] = [$table, $column, $value, $compare];
         return $this->existResult;
     }

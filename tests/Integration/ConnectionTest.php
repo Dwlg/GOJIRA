@@ -2,6 +2,7 @@
 
 namespace Gojira\Tests\Integration;
 
+use Gojira\Tests\Support\Deprecations;
 use Gojira\Tests\Support\IntegrationTestCase;
 
 /**
@@ -9,6 +10,8 @@ use Gojira\Tests\Support\IntegrationTestCase;
  */
 final class ConnectionTest extends IntegrationTestCase
 {
+    use Deprecations;
+
     private function itemTable(): string
     {
         $table = $this->createTable('id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(50) NULL, qty INT NOT NULL DEFAULT 0');
@@ -68,6 +71,8 @@ final class ConnectionTest extends IntegrationTestCase
 
     public function testExist(): void
     {
+        // Caminho legado: continua funcionando e emite E_USER_DEPRECATED (PR do modo estrito).
+        $this->captureDeprecations();
         $table = $this->itemTable();
 
         self::assertTrue(self::$connection->exist($table, 'name', 'b'));
@@ -80,15 +85,21 @@ final class ConnectionTest extends IntegrationTestCase
         self::assertTrue(self::$connection->exist($table, '', '', 'qty = 5'), 'compare é anexado como SQL');
         self::assertTrue(self::$connection->exist($table, 'name', 'a', 'qty = 1'));
         self::assertFalse(self::$connection->exist($table, 'name', 'a', 'qty = 2'));
+
+        $this->assertDeprecated('exist(): a raw SQL condition');
     }
 
     public function testGetValue(): void
     {
+        // Caminho legado: continua funcionando e emite E_USER_DEPRECATED (PR do modo estrito).
+        $this->captureDeprecations();
         $table = $this->itemTable();
 
         self::assertEquals(['a', 'b'], self::$connection->getValue($table, 'name', 'qty <> 3 ORDER BY id'));
         self::assertEquals(['a'], self::$connection->getValue($table, 'name', 'qty <> 3 ORDER BY id', 1));
         self::assertSame([], self::$connection->getValue($table, 'name', 'qty > 100'));
+
+        $this->assertDeprecated('getValue(): a raw SQL condition');
     }
 
     public function testTableExistAndFieldExist(): void
@@ -122,6 +133,8 @@ final class ConnectionTest extends IntegrationTestCase
 
     public function testSecureExecCommitsAllStatements(): void
     {
+        // getValue() com condição em SQL cru é legado: só lê o resultado aqui.
+        $this->captureDeprecations();
         $table = $this->itemTable();
 
         self::assertTrue(self::$connection->secureExec([
@@ -133,6 +146,8 @@ final class ConnectionTest extends IntegrationTestCase
 
     public function testSecureExecRollsBackWhenAStatementFails(): void
     {
+        // getValue() com condição em SQL cru é legado: só lê o resultado aqui.
+        $this->captureDeprecations();
         $table = $this->itemTable();
 
         self::assertFalse(@self::$connection->secureExec([

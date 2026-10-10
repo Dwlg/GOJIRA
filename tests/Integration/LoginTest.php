@@ -84,6 +84,19 @@ final class LoginTest extends IntegrationTestCase
         self::assertEquals($this->codes['ana'], $_SESSION['ADMCod']);
     }
 
+    public function testLoginAndIsLoggedWorkInStrictMode(): void
+    {
+        // As condições que o Login monta para exist() vão como Gojira_Raw.
+        \Connection::setStrict(true);
+        try {
+            self::assertEquals($this->codes['ana'], $this->login->login('ana', 'segredo', 'admin'));
+            self::assertEquals(1, $this->login->isLogged('admin'));
+            self::assertEquals($this->codes['ana'], $this->login->login('ana@example.test', 'segredo', 'admin'));
+        } finally {
+            \Connection::setStrict(null);
+        }
+    }
+
     public function testLoginByEmailStillWorks(): void
     {
         self::assertEquals($this->codes['ana'], $this->login->login('ana@example.test', 'segredo', 'admin'));

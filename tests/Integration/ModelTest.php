@@ -97,6 +97,8 @@ final class ModelTest extends IntegrationTestCase
 
     public function testGetDataKeyFormsSortAndLimit(): void
     {
+        // Caminho legado: continua funcionando e emite E_USER_DEPRECATED (PR do modo estrito).
+        $this->captureDeprecations();
         $model = $this->itemModel();
         foreach (['Caio', 'Ana', 'Bia'] as $i => $name) {
             $model->saveRow(['name' => $name, 'status' => $i % 2]);
@@ -112,6 +114,8 @@ final class ModelTest extends IntegrationTestCase
         self::assertSame(['Bia'], $names($model->getData('', ['name'], [1, 1])));
         self::assertSame(['Caio', 'Ana'], $names($model->getData('', ['id'], '2')));
         self::assertSame(['Bia', 'Caio'], $names($model->getData('', ['name'], '2 OFFSET 1')));
+
+        $this->assertDeprecated('raw SQL string as key');
     }
 
     public function testGetDataCanIndexByPrimaryKey(): void
@@ -165,6 +169,8 @@ final class ModelTest extends IntegrationTestCase
 
     public function testCountDataAndDelete(): void
     {
+        // Caminho legado: continua funcionando e emite E_USER_DEPRECATED (PR do modo estrito).
+        $this->captureDeprecations();
         $model = $this->itemModel();
         $model->saveRow(['name' => 'Ana', 'status' => 1]);
         $model->saveRow(['name' => 'Bia', 'status' => 1]);
@@ -178,6 +184,8 @@ final class ModelTest extends IntegrationTestCase
 
         self::assertTrue($model->delete(['status' => 0]));
         self::assertEquals(1, $model->countData());
+
+        $this->assertDeprecated('raw SQL string as key');
     }
 
     public function testGetEmptyRowUsesColumnDefaults(): void
@@ -191,6 +199,8 @@ final class ModelTest extends IntegrationTestCase
 
     public function testCommandBuilderRunsAgainstTheDatabase(): void
     {
+        // Caminho legado: continua funcionando e emite E_USER_DEPRECATED (PR do modo estrito).
+        $this->captureDeprecations();
         $model = $this->itemModel();
         $model->saveRow(['name' => 'Ana', 'status' => 1]);
         $model->saveRow(['name' => 'Bia', 'status' => 1]);
@@ -204,5 +214,7 @@ final class ModelTest extends IntegrationTestCase
         $rows = $model->getCommandData(true, true);
 
         self::assertEquals([['status' => 1, 'total' => 2], ['status' => 0, 'total' => 1]], $rows);
+
+        $this->assertDeprecated('field(): a SQL expression as field');
     }
 }

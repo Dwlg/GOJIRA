@@ -39,7 +39,11 @@ final class GetWhereTest extends ModelTestCase
 
     public function testNonNumericStringKeyIsUsedVerbatimAsWhereClause(): void
     {
+        // Caminho legado: continua funcionando e emite E_USER_DEPRECATED (PR do modo estrito).
+        $this->captureDeprecations();
         self::assertSame('status = 1 AND name <> ""', $this->model()->getWhere('status = 1 AND name <> ""'));
+
+        $this->assertDeprecated('raw SQL string as key');
     }
 
     public function testAssociativeArrayBuildsEqualityPerColumn(): void

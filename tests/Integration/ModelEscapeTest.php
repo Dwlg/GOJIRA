@@ -172,6 +172,8 @@ final class ModelEscapeTest extends IntegrationTestCase
 
     public function testDeleteWithoutKeyKeepsTheRows(): void
     {
+        // Caminho legado: continua funcionando e emite E_USER_DEPRECATED (PR do modo estrito).
+        $this->captureDeprecations();
         $model = $this->codeModel();
         $model->saveRow(['code' => 'a', 'name' => 'a']);
 
@@ -185,21 +187,29 @@ final class ModelEscapeTest extends IntegrationTestCase
 
         self::assertTrue($model->delete('1=1'));
         self::assertEquals(0, $model->countData());
+
+        $this->assertDeprecated('raw SQL string as key');
     }
 
     /** @dataProvider trickyValues */
     public function testConnectionExistMatchesTrickyValuesLiterally(string $value): void
     {
+        // Caminho legado: continua funcionando e emite E_USER_DEPRECATED (PR do modo estrito).
+        $this->captureDeprecations();
         $table = $this->createTable('id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(50) NULL');
         self::$connection->execute('INSERT INTO `' . $table . '` (name) VALUES ("' . self::$connection->escape($value) . '"), ("x")');
 
         self::assertTrue(self::$connection->exist($table, 'name', $value));
         self::assertFalse(self::$connection->exist($table, 'name', $value . 'z'));
         self::assertTrue(self::$connection->exist($table, 'name', $value, 'id = 1'));
+
+        $this->assertDeprecated('exist(): a raw SQL condition');
     }
 
     public function testGetValueAcceptsNumericLimitsAndRejectsOthers(): void
     {
+        // Caminho legado: continua funcionando e emite E_USER_DEPRECATED (PR do modo estrito).
+        $this->captureDeprecations();
         $table = $this->createTable('id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(50) NULL');
         self::$connection->execute('INSERT INTO `' . $table . '` (name) VALUES ("a"), ("b"), ("c")');
 
@@ -208,6 +218,7 @@ final class ModelEscapeTest extends IntegrationTestCase
         self::assertSame(['b'], self::$connection->getValue($table, 'name', '1=1', '1, 1'));
 
         self::assertSame(['c'], self::$connection->getValue($table, 'name', '1=1', '1 OFFSET 2'));
+        $this->assertDeprecated('getValue(): a raw SQL condition');
 
         $this->expectException(\Exception::class);
         self::$connection->getValue($table, 'name', '1=1', '1 ROWS');

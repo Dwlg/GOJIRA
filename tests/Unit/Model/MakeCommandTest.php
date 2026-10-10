@@ -41,6 +41,8 @@ final class MakeCommandTest extends ModelTestCase
 
     public function testWhereValuesAndOperatorsAreConcatenatedVerbatim(): void
     {
+        // Caminho legado: continua funcionando e emite E_USER_DEPRECATED (PR do modo estrito).
+        $this->captureDeprecations();
         $model = $this->model();
         $model->field('id')
             ->where('status', '=', 1)->wAnd()
@@ -51,6 +53,8 @@ final class MakeCommandTest extends ModelTestCase
             'SELECT id FROM `recording` as `a`  WHERE status = 1 AND name LIKE "A%" OR id IS NULL',
             $this->command($model)
         );
+
+        $this->assertDeprecated('where(): a raw SQL value');
     }
 
     public function testJoinsUseSequentialLetterAliasesUnlessAliasIsGiven(): void
@@ -71,14 +75,21 @@ final class MakeCommandTest extends ModelTestCase
 
     public function testJoinTypeIsUppercasedWithoutValidation(): void
     {
+        // Caminho legado: continua funcionando e emite E_USER_DEPRECATED (PR do modo estrito).
+        $this->captureDeprecations();
         $model = $this->model();
         $model->field('id')->join('natural', 'other', '1=1');
 
         self::assertSame('SELECT id FROM `recording` as `a`  NATURAL JOIN `other` as b on 1=1', $this->command($model));
+
+        $this->assertDeprecated('join(): a join type outside');
+        $this->assertDeprecated('join(): a SQL expression as join condition');
     }
 
     public function testGroupHavingOrderAndLimit(): void
     {
+        // Caminho legado: continua funcionando e emite E_USER_DEPRECATED (PR do modo estrito).
+        $this->captureDeprecations();
         $model = $this->model();
         $model->field('status')->field('COUNT(*)', 'total')
             ->group('status')
@@ -92,6 +103,9 @@ final class MakeCommandTest extends ModelTestCase
             . ' ORDER BY `status` DESC, a.name ASC LIMIT 10, 20',
             $this->command($model)
         );
+
+        $this->assertDeprecated('field(): a SQL expression as field');
+        $this->assertDeprecated('having(): a raw SQL string');
     }
 
     /** @dataProvider orderExpressions */

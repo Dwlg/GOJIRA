@@ -34,6 +34,12 @@ define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
 			protected static $dbUser;			//Usuário que foi usado para conectar
 			protected static $dbPassword;		//Senha para a base de dados
 
+         //Modo estrito (opt-in): null segue a constante GOJIRA_MODEL_STRICT; true/false vem de setStrict()
+         protected static $strict = null;
+
+         //Avisos de deprecation já emitidos nesta requisição (um por recurso)
+         protected static $deprecationsSent = [];
+
 
          //Se o PHP sofre um erro e por algum motivo fecha durante uma transação
          //a tabela fica locada no mysql até o apache reiniciar. Para evitar isso
@@ -200,6 +206,152 @@ define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
             $this->checkConnection();
 
             return self::$connection->real_escape_string( (string)( $value ?? '' ) );
+         }
+
+
+         //Liga (true), desliga (false) ou volta a seguir a constante GOJIRA_MODEL_STRICT (null).
+         //No modo estrito, SQL cru do chamador só entra por Gojira_Raw / Connection::raw().
+         static function setStrict( $on ){
+            self::$strict = ( $on === null ? null : (bool)$on );
+         }
+
+         static function isStrict(){
+            if( self::$strict !== null ) return self::$strict;
+            return defined( 'GOJIRA_MODEL_STRICT' ) && (bool)constant( 'GOJIRA_MODEL_STRICT' );
+         }
+
+         //Marca um trecho como SQL intencional. Cada ? fora de aspas recebe um valor de $params, escapado.
+         static function raw( $sql, array $params = [] ){
+            return Gojira_Raw::sql( $sql, $params );
+         }
+
+
+         //Troca cada ? fora de aspas e crases por um literal escapado de $params (na ordem).
+         //Placeholder sem valor, valor sobrando ou aspas abertas lançam ModelException 0x201B.
+         function bindSql( $sql, array $params = [] ){
+
+            $sql    = (string)$sql;
+            $params = array_values( $params );
+            $len    = strlen( $sql );
+            $out    = '';
+            $quote  = null;
+            $n      = 0;
+
+            for( $i = 0; $i < $len; $i++ ){
+               $c = $sql[ $i ];
+
+               if( $quote !== null ){
+                  $out .= $c;
+                  if( $c === '\\' && $quote !== '`' && $i + 1 < $len ){
+                     $out .= $sql[ ++$i ];
+                  } elseif( $c === $quote ){
+                     $quote = null;
+                  }
+
+               } elseif( $c === "'" || $c === '"' || $c === '`' ){
+                  $quote = $c;
+                  $out  .= $c;
+
+               } elseif( $c === '?' ){
+                  if( !array_key_exists( $n, $params ) ){
+                     throw( new ModelException( 'Missing value for placeholder ' . ($n + 1), 0x201B ) );
+                  }
+                  $out .= $this->sqlLiteral( $params[ $n++ ] );
+
+               } else {
+                  $out .= $c;
+               }
+            }
+
+            if( $quote !== null ){
+               throw( new ModelException( 'Unterminated quote in SQL fragment', 0x201B ) );
+            }
+            if( $n !== count( $params ) ){
+               throw( new ModelException( 'More values than placeholders', 0x201B ) );
+            }
+
+            return $out;
+         }
+
+
+         //Literal SQL de um valor PHP: NULL, 1/0, número, texto escapado entre aspas simples,
+         //Gojira_Raw como está e array como lista "a, b" (para IN). O resto lança ModelException 0x201B.
+         function sqlLiteral( $value, $allowList = true ){
+
+            if( $value instanceof Gojira_Raw ) return $this->renderRaw( $value );
+            if( is_null( $value ) )            return 'NULL';
+            if( is_bool( $value ) )            return ( $value ? '1' : '0' );
+            if( is_int( $value ) )             return (string)$value;
+            if( is_float( $value ) && is_finite( $value ) ) return (string)$value;
+            if( is_string( $value ) )          return "'" . $this->escape( $value ) . "'";
+
+            if( is_array( $value ) && $allowList && count( $value ) > 0 ){
+               $list = [];
+               foreach( $value as $a ) $list[] = $this->sqlLiteral( $a, false );
+               return implode( ', ', $list );
+            }
+
+            throw( new ModelException( 'Invalid value for a SQL placeholder', 0x201B ) );
+         }
+
+
+         //SQL de um Gojira_Raw, com os valores vinculados
+         function renderRaw( Gojira_Raw $raw ){
+            return ( $raw->getParams() === [] ? $raw->getSql() : $this->bindSql( $raw->getSql(), $raw->getParams() ) );
+         }
+
+
+         //Identificador simples: coluna, tabela.coluna (com ou sem crase) e, se $star, * ou tabela.*
+         protected static function isIdentifier( $name, $star = false ){
+
+            if( !is_string( $name ) ) return false;
+
+            $part = '(?:`[^`]+`|[A-Za-z_]\w*)';
+            $last = ( $star ? '(?:`[^`]+`|[A-Za-z_]\w*|\*)' : $part );
+
+            return preg_match( '/\A\s*(?:' . $part . '\.)?' . $last . '\s*\z/', $name ) === 1 ||
+                   ( $star && trim( $name ) === '*' );
+         }
+
+
+         //Caminho legado: no modo estrito lança ModelException 0x201A; fora dele emite
+         //E_USER_DEPRECATED (uma vez por recurso) e deixa o chamador seguir.
+         protected static function legacySql( $feature, $what, $use ){
+
+            if( self::isStrict() ){
+               throw( new ModelException( $what . ' is not allowed in strict mode; use ' . $use, 0x201A ) );
+            }
+
+            self::deprecated( $feature, $what . ' is deprecated; use ' . $use );
+         }
+
+
+         //Condição de exist()/getValue(): Gojira_Raw, array coluna => valor ou (legado) string crua
+         protected function sqlCondition( $compare, $feature ){
+
+            if( $compare instanceof Gojira_Raw ) return $this->renderRaw( $compare );
+
+            if( is_array( $compare ) ){
+               $sql = '';
+               foreach( $compare as $col => $val ){
+                  $sql .= ( $sql === '' ? '' : ' AND ' ) . '`' . str_replace( '`', '``', (string)$col ) . '`' .
+                          ( is_null( $val ) ? ' IS NULL' : ' = ' . $this->sqlLiteral( $val, false ) );
+               }
+               return $sql;
+            }
+
+            self::legacySql( $feature, 'Connection::' . $feature . '(): a raw SQL condition', 'Connection::raw(\'col = ?\', [$value]) or an array of column => value' );
+            return (string)$compare;
+         }
+
+
+         //Emite E_USER_DEPRECATED uma vez por requisição para cada recurso
+         protected static function deprecated( $feature, $message ){
+
+            if( isset( self::$deprecationsSent[ $feature ] ) ) return;
+            self::$deprecationsSent[ $feature ] = true;
+
+            trigger_error( $message, E_USER_DEPRECATED );
          }
 
 
@@ -471,7 +623,8 @@ define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
             $sql = '';
 
             if( !empty( $column  ) ) $sql .= '`' . str_replace( '`', '``', $column ) . '`' . ( is_null($value) ? ' IS NULL ' : '="' . $this->escape( $value ) . '" ');
-            if( !empty( $compare ) ) $sql .= (empty( $sql ) ? '' : ' AND ') . $compare;
+            //$compare: Gojira_Raw (com bind), array coluna => valor ou, no legado, SQL cru
+            if( !empty( $compare ) ) $sql .= (empty( $sql ) ? '' : ' AND ') . $this->sqlCondition( $compare, 'exist' );
             if( !empty( $sql     ) ) $sql = 'SELECT COUNT(*) AS a FROM `' . str_replace( '`', '``', $table ) . '` WHERE ' . $sql;
 
             $query = $this->query( $sql );
@@ -528,8 +681,18 @@ define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
 
             $this->checkConnection();
 
+            //$field: coluna ou Gojira_Raw; $table: nome simples; $compare: Gojira_Raw, array ou (legado) SQL cru
+            if( $field instanceof Gojira_Raw ){
+               $field = $this->renderRaw( $field );
+            } elseif( !self::isIdentifier( $field ) ){
+               self::legacySql( 'getValue-field', 'Connection::getValue(): a SQL expression as field', 'Connection::raw()' );
+            }
+            if( self::isStrict() && !self::isIdentifier( $table ) ){
+               self::legacySql( 'getValue-table', 'Connection::getValue(): an invalid table name', 'a plain table name' );
+            }
+
             $ret = array();
-            $sql = 'select ' . $field . ' AS a from ' . $table . ' where ' . $compare;
+            $sql = 'select ' . $field . ' AS a from ' . $table . ' where ' . $this->sqlCondition( $compare, 'getValue' );
             
             //O limite aceita só inteiro, "n, m" ou "n OFFSET m"; o resto lança exceção
             if( $max > 0 || is_string( $max ) ){
@@ -568,5 +731,31 @@ define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
          function __construct( $message, $err_cod = 0 ){
             parent::__construct( $message, $err_cod );
          }
+
+      }
+
+
+      //Trecho de SQL intencional, escrito pelo programador. É a única forma de passar SQL cru
+      //ao Model e à Connection no modo estrito. Cada ? fora de aspas recebe um valor de $params,
+      //escapado: Gojira_Raw::sql('created > ?', [$data]). Nunca monte o $sql com dado do usuário.
+      final class Gojira_Raw{
+
+         private $sql;
+         private $params;
+
+         private function __construct( $sql, array $params ){
+            $this->sql    = $sql;
+            $this->params = array_values( $params );
+         }
+
+         static function sql( $sql, array $params = [] ){
+            if( !is_string( $sql ) || trim( $sql ) === '' ){
+               throw( new InvalidArgumentException( 'Gojira_Raw::sql() expects a non-empty SQL string' ) );
+            }
+            return new self( $sql, $params );
+         }
+
+         function getSql(){    return $this->sql; }
+         function getParams(){ return $this->params; }
 
       }

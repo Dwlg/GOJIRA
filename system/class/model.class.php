@@ -20,9 +20,15 @@ abstract class Model extends Connection{
 	'COMPRESS', 'DECODE', 'ENCODE', 'MD5', 'SHA1', 'SHA2', 'UNCOMPRESS', 'VALIDATE_PASSWORD_STRENGTH',
 	'ABS', 'ACOS', 'ASIN', 'ATAN', 'CEIL', 'CEILING', 'CONV', 'COS', 'COT', 'DEGREES', 'EXP', 'FLOOR', 'LN', 'LOG', 'LOG10', 'LOG2', 'MOD', 'PI', 'POW', 'POWER', 'RADIANS', 'ROUND', 'SIGN', 'SIN', 'SQRT', 'TAN', 'TRUNCATE'];
 
-	//Avisos de deprecation já emitidos nesta requisição (um por recurso)
-	private static $deprecationsSent = [];
-	
+	//Funções sem argumento que o modo estrito ainda aceita como valor em saveRow
+	private static $strictValueFunctions = '/\A(NOW|CURDATE|CURTIME|CURRENT_TIMESTAMP|UUID)\(\s*\)\z/i';
+
+	//Operadores aceitos por where() no modo estrito
+	private static $whereOperators = ['=', '<>', '!=', '<', '>', '<=', '>=', 'LIKE', 'NOT LIKE', 'IN', 'NOT IN', 'IS', 'IS NOT'];
+
+	//Tipos de join aceitos no modo estrito
+	private static $joinTypes = ['INNER', 'LEFT', 'RIGHT', 'CROSS', 'LEFT OUTER', 'RIGHT OUTER'];
+
 	
 	//Construtores do objeto
 	function __construct1( $globals ){
@@ -133,9 +139,14 @@ abstract class Model extends Connection{
 	//From - No caso de fazer um select de outra tabela, sem precisar mudar o campo TABLE
 	protected function from( $table, $alias = 'a' ){ $this->sql['table'] = [$table, $alias]; return $this; }
 	
-	//Comparações
+	//Comparações. No modo estrito: $field é coluna (ou Gojira_Raw), $compare é um operador da lista
+	//e $value é um valor PHP, escapado (array para IN), um Gojira_Raw ou uma subconsulta.
+	//Fora dele, $value entra cru, como antes (com deprecation quando é texto).
 	protected function where( $field, $compare, $value ){ $this->sql['where'][] = array($field, $compare, $value ); return $this; }
-	
+
+	//Condição com bind, nos dois modos: whereRaw('a.created > ? OR a.status IN (?)', [$data, [1, 2]])
+	protected function whereRaw( $sql, array $params = [] ){ $this->sql['where'][] = array( Gojira_Raw::sql( $sql, $params ), null, null ); return $this; }
+
 	//Separadores do where
 	protected function wOr(){   $this->sql['where'][ count( $this->sql['where'] ) - 1 ][] = 'OR';   return $this; }
 	protected function wAnd(){	$this->sql['where'][ count( $this->sql['where'] ) - 1 ][] = 'AND';  return $this; }
@@ -149,9 +160,12 @@ abstract class Model extends Connection{
 	//having
 	protected function having( $sintax ){ $this->sql['having'][] = $sintax; return $this; }
 	
+	//having com bind, nos dois modos: havingRaw('COUNT(*) > ?', [$n])
+	protected function havingRaw( $sql, array $params = [] ){ $this->sql['having'][] = Gojira_Raw::sql( $sql, $params ); return $this; }
+
 	//Separadores do having
-	protected function hOr(){ $this->sql['having'][] = 'OR'; return $this; }
-	protected function hAnd(){ $this->sql['having'][] = 'AND'; return $this; }
+	protected function hOr(){ $this->sql['having'][] = Gojira_Raw::sql( 'OR' ); return $this; }
+	protected function hAnd(){ $this->sql['having'][] = Gojira_Raw::sql( 'AND' ); return $this; }
 	
 	//Join
 	protected function join( $type, $table, $comp, $alias = '' ){ $this->sql[ 'join' ][] = array( $type, $table, $comp, $alias );  return $this; }
@@ -175,51 +189,55 @@ abstract class Model extends Connection{
 		$sql = 'SELECT ';
 		//Campos base do select
 		foreach( $obj->sql['field'] as $a){
-			$sql .= (strlen( $sql ) > 8 ? ', ' : '') .
-			(empty( $a[2] ) ? '' : '`' . $a[2] . '`.' ) .
-			$a[0] . (empty( $a[1] ) ? '' : ' AS "' . $a[1] . '"');
+			$sql .= (strlen( $sql ) > 8 ? ', ' : '') . $this->sqlBuilderField( $a );
 		}
-		
+
 		$table = (isset( $obj->sql['table'] ) ? $obj->sql['table'][0] : $obj->table);
 		$alias = (isset( $obj->sql['table'] ) ? $obj->sql['table'][1] : 'a');
+		if( isset( $obj->sql['table'] ) && self::isStrict() && ( !(is_object( $table ) || self::isSimpleName( $table )) || !self::isSimpleName( $alias ) ) ){
+			throw( new ModelException( 'Model::from(): an invalid table or alias is not allowed in strict mode', 0x201A ) );
+		}
 		$sql .= ' FROM ' . (is_object( $table ) ? '(' . $this->makeCommand($table) . ')' : '`' . $table . '`') . ' as `' . $alias . '` ';
-		
+
 		//parte dos joins
 		if( isset( $obj->sql[ 'join' ] ) && count( $obj->sql[ 'join' ] ) > 0 ){
 			$b = 98;
 			foreach( $obj->sql[ 'join' ] as $a ){
-				
-				if( is_object( $a ) ){
-				} else {
-				}
-				$sql .= ' ' . strtoupper($a[0]) . ' JOIN ' .
-				(is_object( $a[1] ) ? '(' . $this->makeCommand($a[1]) . ')' : '`' . $a[1] . '`') .
-				' as ' . (empty( $a[3] ) ? chr( $b++ ) : '`' . $a[3] . '`') . ' on ' . $a[2];
+				$sql .= $this->sqlBuilderJoin( $a, $b );
 			}
 		}
-		
+
 		//Parte do where
 		if( isset( $obj->sql['where'] ) && count( $obj->sql['where'] ) > 0 ){
 			$sql .= ' WHERE ';
 			foreach( $obj->sql['where'] as $a ){
-				$sql .= $a[0] . ' ' . $a[1] . ' ' . (is_object($a[2]) ? '(' . $this->makeCommand($a[2]) . ')' : $a[2]) .
-				(count( $a ) > 3 ? ' ' . $a[3] . ' ' : '');
+				$sql .= $this->sqlBuilderWhere( $a ) . (count( $a ) > 3 ? ' ' . $a[3] . ' ' : '');
 			}
 		}
-		
+
 		//Parte do group by
 		if( isset( $obj->sql['group'] ) && count( $obj->sql['group'] ) > 0 ){
 			$sql .= ' GROUP BY ';
 			$g    = 0;
 			foreach( $obj->sql['group'] as $a ){
+				if( $a instanceof Gojira_Raw ){
+					$a = $this->renderRaw( $a );
+				} elseif( !self::isIdentifier( $a ) && !ctype_digit( trim( (string)$a ) ) ){
+					self::legacySql( 'group', 'Model::group(): a SQL expression', 'a column name or Model::raw()' );
+				}
 				$sql .= ( $g++ > 0 ? ', ' : '') . $a;
 			}
 		}
-		
-		//Parte do having
+
+		//Parte do having (hOr/hAnd e havingRaw já chegam como Gojira_Raw)
 		if( isset( $obj->sql['having'] ) && count( $obj->sql['having'] ) > 0 ){
 			$sql .= ' HAVING ';
 			foreach( $obj->sql['having'] as $a ){
+				if( $a instanceof Gojira_Raw ){
+					$a = $this->renderRaw( $a );
+				} else {
+					self::legacySql( 'having', 'Model::having(): a raw SQL string', 'havingRaw(\'COUNT(*) > ?\', [$n]) or Model::raw()' );
+				}
 				$sql .= ' ' . $a . ' ';
 			}
 		}
@@ -430,14 +448,16 @@ abstract class Model extends Connection{
 		
 		
 		//Caso precise vir em uma ordem especifica
-		if( is_array( $sort ) ){
+		if( $sort instanceof Gojira_Raw ){
+			$sql .= ' ORDER BY ' . $this->renderRaw( $sort );
+		} elseif( is_array( $sort ) ){
 			$order = '';
 			foreach( $sort as $a ) $order .= (empty( $order ) ? '' : ', ') . self::quoteIdentifier( $a );
 			$sql .= ' ORDER BY ' . $order;
 		} elseif( !empty( $sort ) ){
 			//Lista de colunas com direção opcional é aceita; o resto é expressão livre
 			if( !preg_match( '/\A\s*`?\w+`?(\s+(ASC|DESC))?\s*(,\s*`?\w+`?(\s+(ASC|DESC))?\s*)*\z/i', $sort ) ){
-				self::deprecated( 'sort', 'Model::getData(): sort as a free SQL expression is deprecated; pass an array of column names' );
+				self::legacySql( 'sort', 'Model::getData(): sort as a free SQL expression', 'an array of column names, "col [ASC|DESC], ..." or Model::raw()' );
 			}
 			$sql .= ' ORDER BY ' . $sort;
 		}
@@ -574,9 +594,10 @@ abstract class Model extends Connection{
 		
 		
 		//Monta a sentença de comparação no caso de ser um update e usa para identificar o mesmo
-		foreach( $pk as $i => $a ) $where .= (empty( $where ) ? '' : ' AND ') . self::quoteIdentifier( $i ) . '="' . $this->escape( $a ) . '"';
-		
-		if( $this->exist( $table, '', '', $where ) ){
+		foreach( $pk as $i => $a ) $where .= (empty( $where ) ? '' : ' AND ') . self::quoteIdentifier( $i ) . '=' . ($a instanceof Gojira_Raw ? $this->renderRaw( $a ) : '"' . $this->escape( $a ) . '"');
+
+		//O WHERE acima é montado aqui, com os valores escapados: vai como Gojira_Raw
+		if( $this->exist( $table, '', '', ( $where === '' ? '' : Gojira_Raw::sql( $where ) ) ) ){
 			
 			//É uma alteração
 			foreach( $structure as $col ){
@@ -615,11 +636,11 @@ abstract class Model extends Connection{
 				
 				foreach( $pk as $i => $a ){
 					
-					if( $structure[ $i ]->is_auto_increment && (empty( $a ) || strtolower($a) == 'null') ){
+					if( $structure[ $i ]->is_auto_increment && (empty( $a ) || (is_string( $a ) && strtolower($a) == 'null')) ){
 						$a = $this->lastId;
 					}
-					
-					$where .= (empty( $sql ) ? '' : ' AND ') . self::quoteIdentifier( $i ) . '="' . $this->escape( $a ) . '"';
+
+					$where .= (empty( $sql ) ? '' : ' AND ') . self::quoteIdentifier( $i ) . '=' . ($a instanceof Gojira_Raw ? $this->renderRaw( $a ) : '"' . $this->escape( $a ) . '"');
 					$sql   .= (empty( $sql ) ? '' : ', ') . self::quoteIdentifier( $i );
 					
 				}
@@ -675,13 +696,19 @@ abstract class Model extends Connection{
 		//Monta a parte de comparação
 		if( $key === '' ){
 			$where = '1=1';
-			
-		}elseif( is_numeric( $key ) ){
-			
+
+		} elseif( $key instanceof Gojira_Raw ){
+
+			$where = $this->renderRaw( $key );
+
+		} elseif( is_numeric( $key ) ){
+
 			$where .= $primary[ 0 ] . '="' . $this->escape( $key ) . '"';
-			
+
 		} elseif( is_string( $key ) ){
-			
+
+			//WHERE em string crua: legado (no estrito, só por Model::raw())
+			self::legacySql( 'where-string', 'Model: a raw SQL string as key (getData/countData/delete/getWhere)', 'an array of column => value or Model::raw(\'col = ?\', [$value])' );
 			$where = $key;
 			
 		} elseif( is_array( $key ) ){
@@ -756,14 +783,24 @@ abstract class Model extends Connection{
 		
 		if( is_null( $value ) ){
 			$ret = 'NULL';
-			
+
+		} elseif( $value instanceof Gojira_Raw ){
+			$ret = $this->renderRaw( $value );
+
 		} elseif( !is_scalar( $value ) ){
 			throw( new ModelException( 'Field <strong>' . $format->name . '</strong> has an invalid value', 0x2017 ) );
-			
+
 		} elseif( preg_match( $this->mysqlFuncRegex, (string)$value ) || preg_match( $this->mysqlLiteralRegex, (string)$value ) ){
-			//Função com argumento entra crua no SQL; só as sem argumento (NOW(), UUID()...) seguem sem aviso
-			if( !preg_match( '/\A\w+\(\s*\)\z/', (string)$value ) && !preg_match( $this->mysqlLiteralRegex, (string)$value ) ){
-				self::deprecated( 'function-value', 'Model: SQL function with arguments as a field value is deprecated' );
+			if( preg_match( $this->mysqlLiteralRegex, (string)$value ) ){
+				//NULL e CURRENT_TIMESTAMP seguem como palavra reservada
+			} elseif( self::isStrict() ){
+				//Estrito: sem Gojira_Raw, só funções sem argumento de uma lista fixa
+				if( !preg_match( self::$strictValueFunctions, (string)$value ) ){
+					throw( new ModelException( 'Field <strong>' . $format->name . '</strong>: a SQL function as value is not allowed in strict mode; use Model::raw()', 0x201A ) );
+				}
+			} elseif( !preg_match( '/\A\w+\(\s*\)\z/', (string)$value ) ){
+				//Legado: função com argumento entra crua no SQL; as sem argumento (NOW(), UUID()...) seguem sem aviso
+				self::deprecated( 'function-value', 'Model: SQL function with arguments as a field value is deprecated; use Model::raw()' );
 			}
 			$ret = $value;
 			
@@ -811,18 +848,122 @@ abstract class Model extends Connection{
 	//posição numérica e coluna com tabela (a.nome) seguem como estão;
 	//qualquer outra expressão segue como está, com aviso de deprecation.
 	private function sqlOrderTerm( $term ){
-		
+
+		if( $term instanceof Gojira_Raw ) return $this->renderRaw( $term );
+
 		$term = trim( (string)$term );
-		
+
 		if( preg_match( '/\A\w+\z/', $term ) && !ctype_digit( $term ) ){
 			return self::quoteIdentifier( $term );
 		}
-		
+
 		if( !preg_match( '/\A(\d+|`[^`]+`|\w+\.\w+|`[^`]+`\.`[^`]+`)\z/', $term ) ){
-			self::deprecated( 'order', 'Model::order(): a free SQL expression is deprecated; pass a column name' );
+			self::legacySql( 'order', 'Model::order(): a free SQL expression', 'a column name or Model::raw()' );
 		}
-		
+
 		return $term;
+	}
+
+
+	//Campo do construtor: [nome, alias, tabela]
+	private function sqlBuilderField( $a ){
+
+		$name = $a[0];
+
+		if( $name instanceof Gojira_Raw ){
+			$name = $this->renderRaw( $name );
+		} elseif( !self::isIdentifier( $name, true ) ){
+			self::legacySql( 'field', 'Model::field(): a SQL expression as field', 'a column name or Model::raw()' );
+		}
+
+		if( self::isStrict() && ( (!empty( $a[1] ) && !self::isSimpleName( $a[1] )) || (!empty( $a[2] ) && !self::isSimpleName( $a[2] )) ) ){
+			throw( new ModelException( 'Model::field(): an invalid alias or table is not allowed in strict mode', 0x201A ) );
+		}
+
+		return (empty( $a[2] ) ? '' : '`' . $a[2] . '`.' ) . $name . (empty( $a[1] ) ? '' : ' AS "' . $a[1] . '"');
+	}
+
+
+	//Join do construtor: [tipo, tabela, condição, alias]. $b é a próxima letra de alias automático.
+	private function sqlBuilderJoin( $a, &$b ){
+
+		$type = strtoupper( preg_replace( '/\s+/', ' ', trim( (string)$a[0] ) ) );
+		if( !in_array( $type, self::$joinTypes, true ) ){
+			self::legacySql( 'join-type', 'Model::join(): a join type outside ' . implode( ', ', self::$joinTypes ), 'one of them' );
+		}
+
+		if( self::isStrict() && ( !(is_object( $a[1] ) || self::isSimpleName( $a[1] )) || (!empty( $a[3] ) && !self::isSimpleName( $a[3] )) ) ){
+			throw( new ModelException( 'Model::join(): an invalid table or alias is not allowed in strict mode', 0x201A ) );
+		}
+
+		//Condição: Gojira_Raw ou comparação entre colunas (a.id = b.a_id [AND ...]); o resto é legado
+		$on = $a[2];
+		if( $on instanceof Gojira_Raw ){
+			$on = $this->renderRaw( $on );
+		} else {
+			$col = '(?:(?:`[^`]+`|[A-Za-z_]\w*)\.)?(?:`[^`]+`|[A-Za-z_]\w*)';
+			$cmp = $col . '\s*(?:=|<>|!=|<=|>=|<|>)\s*' . $col;
+			if( !is_string( $on ) || !preg_match( '/\A\s*' . $cmp . '(?:\s+AND\s+' . $cmp . ')*\s*\z/i', $on ) ){
+				self::legacySql( 'join-on', 'Model::join(): a SQL expression as join condition', 'a column comparison or Model::raw()' );
+			}
+		}
+
+		return ' ' . strtoupper($a[0]) . ' JOIN ' .
+		(is_object( $a[1] ) ? '(' . $this->makeCommand($a[1]) . ')' : '`' . $a[1] . '`') .
+		' as ' . (empty( $a[3] ) ? chr( $b++ ) : '`' . $a[3] . '`') . ' on ' . $on;
+	}
+
+
+	//Comparação do where: [campo, operador, valor] ou, vindo do whereRaw, [Gojira_Raw, null, null]
+	private function sqlBuilderWhere( $a ){
+
+		if( $a[0] instanceof Gojira_Raw && $a[1] === null && $a[2] === null ){
+			return $this->renderRaw( $a[0] );
+		}
+
+		$field = $a[0];
+		if( $field instanceof Gojira_Raw ){
+			$field = $this->renderRaw( $field );
+		} elseif( !self::isIdentifier( $field ) ){
+			self::legacySql( 'where-field', 'Model::where(): a SQL expression as field', 'a column name, Model::raw() or whereRaw()' );
+		}
+
+		$op = strtoupper( preg_replace( '/\s+/', ' ', trim( (string)$a[1] ) ) );
+		if( !in_array( $op, self::$whereOperators, true ) ){
+			self::legacySql( 'where-operator', 'Model::where(): an operator outside ' . implode( ', ', self::$whereOperators ), 'one of them or whereRaw()' );
+		}
+
+		$value = $a[2];
+		if( $value instanceof Gojira_Raw ){
+			$value = $this->renderRaw( $value );
+		} elseif( is_object( $value ) ){
+			$value = '(' . $this->makeCommand( $value ) . ')';
+		} elseif( self::isStrict() ){
+			$value = $this->sqlWhereValue( $op, $value );
+		} elseif( is_string( $value ) && !is_numeric( $value ) && !preg_match( '/\A\s*(NOT\s+)?(NULL|TRUE|FALSE|UNKNOWN)\s*\z/i', $value ) ){
+			//Legado: o valor entra cru. No estrito e na 2.0 ele vira um valor escapado.
+			self::deprecated( 'where-value', 'Model::where(): a raw SQL value is deprecated; use whereRaw(\'col = ?\', [$value]) or Model::raw()' );
+		}
+
+		return $field . ' ' . (self::isStrict() ? $op : $a[1]) . ' ' . $value;
+	}
+
+
+	//Valor do where no modo estrito: sempre um literal escapado
+	private function sqlWhereValue( $op, $value ){
+
+		if( $op === 'IS' || $op === 'IS NOT' ){
+			if( is_null( $value ) ) return 'NULL';
+			if( is_bool( $value ) ) return ( $value ? 'TRUE' : 'FALSE' );
+			if( is_string( $value ) && preg_match( '/\A\s*(NULL|TRUE|FALSE|UNKNOWN)\s*\z/i', $value, $m ) ) return strtoupper( $m[1] );
+			throw( new ModelException( 'Model::where(): IS accepts only NULL, TRUE, FALSE or UNKNOWN', 0x201A ) );
+		}
+
+		if( $op === 'IN' || $op === 'NOT IN' ){
+			return '(' . $this->sqlLiteral( is_array( $value ) ? $value : [ $value ] ) . ')';
+		}
+
+		return $this->sqlLiteral( $value, false );
 	}
 	
 	
@@ -878,17 +1019,13 @@ abstract class Model extends Connection{
 	protected static function quoteIdentifier( $name ){
 		return '`' . str_replace( '`', '``', (string)$name ) . '`';
 	}
-	
-	
-	//Emite E_USER_DEPRECATED uma vez por requisição para cada recurso
-	protected static function deprecated( $feature, $message ){
-		
-		if( isset( self::$deprecationsSent[ $feature ] ) ) return;
-		self::$deprecationsSent[ $feature ] = true;
-		
-		trigger_error( $message, E_USER_DEPRECATED );
+
+
+	//Nome simples (sem ponto) para tabela e alias do construtor
+	private static function isSimpleName( $name ){
+		return is_string( $name ) && preg_match( '/\A[A-Za-z_]\w*\z/', $name ) === 1;
 	}
-	
+
 	
 }
 
