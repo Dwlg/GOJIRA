@@ -148,11 +148,9 @@
 
       public function logout(): void {
 
-         //O Login::logout revoga o remember-me do cookie atual quando o store está
-         //registrado nele (guard() registra). O bloco abaixo cobre um guard criado
-         //direto, com um store que o Login não conhece.
-         $this->login->logout( $this->sessionType );
-
+         //Revoga primeiro o remember-me deste guard (cobre um guard criado direto,
+         //com um store que o Login não conhece). Depois, o Login::logout encerra a
+         //sessão e revoga outros cookies de remember-me com o store registrado nele.
          if( $this->rememberStore instanceof Gojira_RememberTokenStore && isset( $_COOKIE[ $this->rememberCookie ] ) ){
 
             $parts = explode( ':', (string)$_COOKIE[ $this->rememberCookie ], 2 );
@@ -162,6 +160,8 @@
 
             $this->clearRememberCookie();
          }
+
+         $this->login->logout( $this->sessionType );
       }
 
       //Selector e validator vazios ou longos demais são descartados sem consultar

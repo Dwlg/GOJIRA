@@ -10,7 +10,10 @@
    - GOJIRA_TRUSTED_PROXIES = '10.0.0.5, 10.1.0.0/16': o cabeçalho
      X-Forwarded-Proto só é considerado quando REMOTE_ADDR está nessa lista
      (IP exato ou faixa CIDR, IPv4 ou IPv6). Vindo de qualquer outro endereço,
-     o cabeçalho é ignorado.
+     o cabeçalho é ignorado. Atenção: uma faixa /0 ('0.0.0.0/0', '::/0') aceita
+     qualquer endereço da família, e então qualquer cliente decide o esquema.
+     Quando o cabeçalho traz uma lista, vale o último valor, que é o que o
+     proxy confiável acrescentou.
 
    Ver docs/migration/auth-redesign-migration-guide.md.
 */
@@ -44,8 +47,11 @@
          }
 
          if( isset( $_SERVER['HTTP_X_FORWARDED_PROTO'] ) && self::fromTrustedProxy() ){
-            //Pode vir uma lista ("https, http"); vale o primeiro, que é o do cliente.
-            $proto = strtolower( trim( explode( ',', (string)$_SERVER['HTTP_X_FORWARDED_PROTO'] )[0] ) );
+            //Pode vir uma lista ("http, https"). Os valores anteriores vêm de quem
+            //falou com o proxy e podem ter sido forjados; vale o último, que é o
+            //que o proxy confiável acrescentou.
+            $values = explode( ',', (string)$_SERVER['HTTP_X_FORWARDED_PROTO'] );
+            $proto  = strtolower( trim( (string)end( $values ) ) );
             return $proto === 'https';
          }
 

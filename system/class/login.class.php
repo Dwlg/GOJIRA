@@ -67,6 +67,7 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
          private $rememberStore;            //Gojira_RememberTokenStore|null (revogação no logout e na troca de senha)
          private $rememberCookies = [];     //tipo => nome do cookie de remember-me
          private static $dummyHashes = [];  //classe do hasher injetado => hash fictício
+         private static $missingStoreNoticed = false;  //aviso de store ausente uma vez por requisição
 
          //Hashes fictícios para o login de usuário inexistente, um por formato de
          //gravação (bcrypt com o custo padrão e legado). Não correspondem a senha
@@ -192,10 +193,41 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 				return isset( $this->rememberCookies[ $key ] ) ? $this->rememberCookies[ $key ] : 'remember_' . strtolower( trim( (string)$type ) );
 			}
 
+			//Há cookie de remember-me na requisição? Com $type, só os desse(s) tipo(s);
+			//sem, qualquer cookie remember_* ou com nome registrado. Indica que o
+			//projeto usa remember-me.
+			private function hasRememberCookie( $type = null ){
+
+				if( $type !== null ){
+					foreach( explode( ',', (string)$type ) as $t ){
+						if( trim( $t ) !== '' && isset( $_COOKIE[ $this->rememberCookieName( $t ) ] ) ) return true;
+					}
+					return false;
+				}
+
+				foreach( array_keys( $_COOKIE ) as $name ){
+					if( strncmp( (string)$name, 'remember_', 9 ) === 0 || in_array( $name, $this->rememberCookies, true ) ) return true;
+				}
+				return false;
+			}
+
+			//Avisa (uma vez por requisição) que o remember-me não pôde ser revogado
+			//porque o store não está registrado neste Login.
+			private function noticeMissingStore( $where ){
+
+				if( self::$missingStoreNoticed ) return;
+				self::$missingStoreNoticed = true;
+
+				trigger_error( 'Login::' . $where . '(): há cookie de remember-me, mas nenhum Gojira_RememberTokenStore registrado; os tokens não foram revogados. Registre o store com Login::setRememberTokenStore() ou Login::guard().', E_USER_NOTICE );
+			}
+
 			//Revoga o token de remember-me do cookie atual de cada tipo e apaga o cookie.
 			private function revokeRememberCookies( $type ){
 
-				if( !( $this->rememberStore instanceof Gojira_RememberTokenStore ) ) return;
+				if( !( $this->rememberStore instanceof Gojira_RememberTokenStore ) ){
+					if( $this->hasRememberCookie( $type ) ) $this->noticeMissingStore( 'logout' );
+					return;
+				}
 
 				foreach( explode( ',', (string)$type ) as $t ){
 
@@ -249,6 +281,13 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 						throw( new Gojira_AuthException( LGN_PASS_INVALID, 0x9003, Gojira_AuthException::INVALID_PASSWORD ) );
 					}
 				} else {
+					//Durante a migração, o hash guardado pode estar num formato diferente do de
+					//gravação (ex.: legado com a flag ligada). O usuário existente gasta então
+					//também a verificação fictícia, e o tempo não separa existente de inexistente.
+					if( $this->storedFormatDiffers( $user->getAuthPasswordHash() ) ){
+						$this->dummyVerify( (string)$pwd );
+					}
+
 					if( ! $this->hasher()->verify( (string)$pwd, $user->getAuthPasswordHash() ) ){
 						throw( new Gojira_AuthException( LGN_PASS_INVALID, 0x9003, Gojira_AuthException::INVALID_PASSWORD ) );
 					}
@@ -658,6 +697,17 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 			//hasher injetado (hash gerado uma vez por processo), bcrypt com
 			//LGN_PASSWORD_REHASH ligada ou legado com ela desligada. Usada quando o
 			//usuário não existe, pelo mesmo caminho de uma verificação real.
+			//true quando o hash guardado não está no formato de gravação configurado
+			//(o mesmo formato do hash fictício do dummyVerify).
+			private function storedFormatDiffers( $stored ){
+
+				if( $this->hasherInjected || $this->rehash ){
+					return $this->hasher()->needsRehash( (string)$stored );
+				}
+
+				return ! ( new Gojira_LegacyHasher() )->looksLegacy( (string)$stored );
+			}
+
 			private function dummyVerify( $plain ){
 
 				if( $this->hasherInjected ){
@@ -863,6 +913,8 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 				//(guard() com store ou setRememberTokenStore()).
 				if( $this->rememberStore instanceof Gojira_RememberTokenStore ){
 					$this->rememberStore->revokeAllForUser( $userId );
+				} elseif( $this->hasRememberCookie() ){
+					$this->noticeMissingStore( 'changePass' );
 				}
 
 				return $ret;
