@@ -17,6 +17,7 @@ e estão listadas abaixo:
 | Modo cookie compara o id exato e avisa que está obsoleto (Fase 5) | Só no modo `setCookie(true)` |
 | Id de sessão trocado no login e no logout (Fase 5) | Nenhum. Os dados da sessão são mantidos |
 | `getPassword()` usa `random_int` (Fase 5) | Nenhum |
+| Mesma mensagem para usuário inexistente e senha errada; situação da conta só depois da senha certa (Fase 5) | Quem exibia "Usuário inválido" ou "Senha inválida" passa a exibir "Usuário ou senha inválidos". Os códigos não mudam |
 
 Exemplo de referência (lido, não executado automaticamente):
 `project_demo/core/controller/authdemo.php`.
@@ -122,10 +123,20 @@ usuário inativo recebe a mensagem de conta desativada.
 **Erros de login.** `login()` lança `Gojira_AuthException` (subclasse de `Exception`, com
 os mesmos códigos de antes: `0x9001` usuário, `0x9002` inativo, `0x9003` senha, `0x9004`
 pendente) e `getAuthCode()` com um código estável em texto (`AUTH_INVALID_USER`,
-`AUTH_INVALID_PASSWORD`, `AUTH_INACTIVE`, `AUTH_PENDING`). Para não revelar quais
-logins existem, mostre ao visitante a mesma mensagem para `0x9001` e `0x9003`. O tempo
-de resposta já ajuda: um login inexistente gasta o custo de gerar um hash no formato de
-gravação atual, parecido com o de verificar uma senha errada.
+`AUTH_INVALID_PASSWORD`, `AUTH_INACTIVE`, `AUTH_PENDING`).
+
+Para a resposta não revelar quais logins existem:
+
+- `0x9001` e `0x9003` têm a mesma mensagem, "Usuário ou senha inválidos"
+  (`LGN_LOGIN_INVALID` e `LGN_PASS_INVALID`). Os códigos continuam distintos para log.
+  Um projeto pode definir essas constantes antes de carregar o framework.
+- A senha é verificada antes da situação da conta: conta pendente ou inativa só é
+  informada a quem acertou a senha. Com a senha errada, a resposta é `0x9003`.
+- Um login inexistente faz uma verificação contra um hash fictício no formato de
+  gravação configurado (bcrypt com `LGN_PASSWORD_REHASH` ligada, legado com ela
+  desligada, ou o do hasher injetado), e o tempo de resposta fica parecido com o de uma
+  senha errada. Numa base com os dois formatos misturados, o tempo segue o formato
+  configurado.
 
 ---
 
@@ -200,8 +211,11 @@ validator, o token é trocado a cada uso e um validator errado revoga o token.
 $store = new Gojira_TableRememberTokenStore( $globals->connection );
 $store->createTableIfMissing();
 
-// No bootstrap do projeto:
+// No bootstrap do projeto (o guard registra o store no Login):
 $guard = $globals->login->guard( 'ADM', $store );   // cookie 'remember_adm', 30 dias
+
+// Numa requisição que não cria guard (ex.: troca de senha), registre o store:
+$globals->login->setRememberTokenStore( $store );
 
 // No login, se o usuário marcou "lembrar de mim":
 $guard->attempt( $usuario, $senha, [], true );
@@ -212,13 +226,22 @@ if( ! $guard->check() ){
 }
 ```
 
-- O cookie sai com `HttpOnly`, `SameSite=Lax` e `Secure` em HTTPS.
-- `logout()` revoga o token da sessão atual e apaga o cookie.
+- O cookie sai com `HttpOnly`, `SameSite=Lax` e `Secure` em HTTPS (ver a seção 6 para
+  proxy).
+- `$guard->logout()` e `$login->logout($tipo)` revogam o token do cookie atual e apagam o
+  cookie, mesmo que a sessão já tenha expirado.
+- `$login->changePass()` revoga todos os tokens do usuário: um cookie copiado antes da
+  troca de senha deixa de valer. Num fluxo de redefinição de senha que não use
+  `changePass()`, chame `$store->revokeAllForUser( $id )`.
+- A troca do token a cada uso é atômica: o token antigo é apagado com uma condição no
+  selector e no hash do validator, e só quem o apagou recebe o novo. Se o mesmo cookie
+  chega em duas requisições ao mesmo tempo, a segunda é tratada como cópia do cookie:
+  todos os tokens do usuário são revogados e ele precisa entrar com a senha de novo.
 - Conta desativada, token expirado ou token de outro tipo de usuário não reabrem sessão.
-- Ao trocar a senha, chame `$store->revokeAllForUser( $id )` para encerrar o
-  remember-me em todos os dispositivos.
 - Rode `$store->purgeExpired()` de tempos em tempos (ex.: num cron) para limpar tokens
   vencidos.
+- `Gojira_RememberTokenStore::rotate()` recebe o hash do validator e devolve `null` quando
+  o token já foi consumido. Um store próprio precisa seguir esse contrato.
 - Nome do cookie e validade são configuráveis:
   `$login->guard( 'ADM', $store, 'lembrar', 7 * 86400 )`.
 
@@ -226,19 +249,33 @@ if( ! $guard->check() ){
 
 ## 6. Cookies de identidade e sessão
 
-- **Modo cookie obsoleto.** `Login::setCookie(true)` grava a identidade em cookies sem
-  assinatura: quem conhece o id de um usuário ativo consegue montá-los. O modo continua
-  desligado por padrão; ligar emite `E_USER_DEPRECATED` uma vez por requisição. Para
-  manter o usuário logado entre visitas, use o remember-me (seção 5).
+- **Modo cookie obsoleto.** `Login::setCookie(true)` continua desligado por padrão;
+  ligar emite `E_USER_DEPRECATED` uma vez por requisição. Para manter o usuário logado
+  entre visitas, use o remember-me (seção 5). A 2.0 assina ou remove este modo.
 - **Quem ainda usa o modo cookie:** os cookies saem com `HttpOnly`, `SameSite=Lax` e
   `Secure` em HTTPS, e o id do cookie precisa ser exatamente o id do banco (um valor que
   o MySQL converteria para o mesmo número, como `1x` ou `01`, não autentica). Se algum
   JavaScript lia esses cookies por `document.cookie` (ex.: `admlogin`), ele para de
   funcionar: exponha os dados por um endpoint próprio.
 - **Troca do id de sessão.** O login e o logout chamam `session_regenerate_id(true)`,
-  mantendo os dados da sessão, quando a sessão está ativa e nada foi enviado ao
-  navegador ainda. Depois de qualquer saída o PHP não consegue enviar o cookie novo, e o
-  id não é trocado.
+  mantendo os dados da sessão, quando a sessão está ativa. Se já houve saída para o
+  navegador, o PHP não consegue enviar o cookie novo: o id não é trocado, e o Login
+  registra o motivo no `error_log` e emite `E_USER_WARNING` com o arquivo e a linha da
+  saída. Chame `login()` e `logout()` antes de enviar conteúdo.
+- **HTTPS atrás de proxy.** Por padrão, só `$_SERVER['HTTPS']` marca os cookies como
+  `Secure`. Atrás de um proxy ou balanceador que termina o TLS, defina antes de carregar
+  o framework uma das opções:
+
+  ```php
+  // O site é servido só por HTTPS: todo cookie de login sai com Secure.
+  define( 'GOJIRA_FORCE_SECURE_COOKIES', true );
+
+  // Ou: X-Forwarded-Proto vale só quando REMOTE_ADDR é um destes (IP ou CIDR).
+  define( 'GOJIRA_TRUSTED_PROXIES', '10.0.0.5, 10.1.0.0/16' );
+  ```
+
+  Vindo de qualquer outro endereço, o cabeçalho `X-Forwarded-Proto` é ignorado. A mesma
+  regra vale para os cookies de identidade e de remember-me.
 
 ---
 
@@ -249,10 +286,12 @@ if( ! $guard->check() ){
 | Comparações em tempo constante (`hash_equals`) | Coberto (Fases 1 e 4) |
 | Aleatoriedade forte (`random_bytes`, `random_int`) | Coberto (Fases 4 e 5) |
 | Cookies `HttpOnly`/`Secure`/`SameSite=Lax` | Coberto (remember-me e identidade) |
-| `session_regenerate_id` no login e no logout | Coberto (Fase 5) |
+| `session_regenerate_id` no login e no logout, com aviso quando não é possível | Coberto (Fase 5) |
+| `Secure` atrás de proxy confiável | Coberto (Fase 5) |
 | Papel sempre resolvido no servidor, nunca lido do cookie | Coberto (Fases 2 a 4) |
-| Rotação e revogação de remember-me; sair de todos os dispositivos | Coberto (Fase 4) |
-| Tempo de resposta parecido para login inexistente e senha errada | Coberto (Fase 2) |
+| Rotação atômica e revogação de remember-me; sair de todos os dispositivos | Coberto (Fases 4 e 5) |
+| Remember-me revogado no logout e na troca de senha | Coberto (Fase 5) |
+| Mesma mensagem e tempo parecido para login inexistente e senha errada | Coberto (Fases 2 e 5) |
 | CSRF em ações de escrita | Fora do escopo; fica para o projeto |
 | Limite de tentativas de login | Fora do escopo; fica para o projeto |
 | Tokens de integração com hash no banco | Fora do escopo; fica para o projeto |
@@ -271,17 +310,23 @@ if( ! $guard->check() ){
 ## Testes
 
 A suíte do repositório roda na CI (GitHub Actions) em PHP 8.0 a 8.4, com a parte de
-integração contra MySQL 8.0 e MariaDB 10.6 reais. As fases 2 a 5 têm 124 testes
+integração contra MySQL 8.0 e MariaDB 10.6 reais. As fases 2 a 5 têm 171 testes
 próprios (contando cada caso de data provider):
 
-| Fase | Arquivos | Testes |
+| Assunto | Arquivo | Testes |
 |---|---|---|
-| 2 — UserProvider, Guard, Login como adapter | `tests/Integration/Auth/TableUserProviderTest.php`, `LoginAdapterTest.php`, `SessionGuardTest.php` | 43 |
-| 3 — AccessPolicy e despacho só de métodos públicos | `tests/Unit/Auth/MapAccessPolicyTest.php`, `tests/Unit/Dispatch/ControllerCallTest.php` | 20 |
-| 4 — remember-me | `tests/Integration/Auth/RememberMeTest.php` | 33 |
-| 5 — cookies, sessão e senha temporária | `tests/Integration/Auth/LoginHardeningTest.php`, `SessionRegenerationTest.php` | 28 |
+| UserProvider padrão | `tests/Integration/Auth/TableUserProviderTest.php` | 18 |
+| Login como adapter, mensagens e tempo de login inexistente | `tests/Integration/Auth/LoginAdapterTest.php` | 18 |
+| Guard | `tests/Integration/Auth/SessionGuardTest.php` | 12 |
+| AccessPolicy | `tests/Unit/Auth/MapAccessPolicyTest.php` | 8 |
+| Despacho só de métodos públicos | `tests/Unit/Dispatch/ControllerCallTest.php` | 12 |
+| Remember-me | `tests/Integration/Auth/RememberMeTest.php` | 33 |
+| Revogação e rotação atômica do remember-me | `tests/Integration/Auth/RememberRevocationTest.php` | 15 |
+| Cookies, modo cookie, proxy e senha temporária | `tests/Integration/Auth/LoginHardeningTest.php` | 27 |
+| Troca do id de sessão (processo separado, sessão real) | `tests/Integration/Auth/SessionRegenerationTest.php` | 7 |
+| HTTPS e proxy confiável | `tests/Unit/Auth/RequestSchemeTest.php` | 21 |
 
-Com a fase 5, a suíte inteira tem 408 testes. Para rodar localmente (o host só precisa
+Com a fase 5, a suíte inteira tem 455 testes. Para rodar localmente (o host só precisa
 de Docker):
 
 ```sh
