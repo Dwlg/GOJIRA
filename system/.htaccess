@@ -1,1 +1,28 @@
+# Arquivos do framework não são servidos pela web.
+# Só o thumb.php (e os arquivos estáticos fora de vendor/) continuam acessíveis.
 
+<FilesMatch "\.(php|phtml|phar|inc)$">
+   <IfModule mod_authz_core.c>
+      Require all denied
+   </IfModule>
+   <IfModule !mod_authz_core.c>
+      Order allow,deny
+      Deny from all
+   </IfModule>
+</FilesMatch>
+
+<Files "thumb.php">
+   <IfModule mod_authz_core.c>
+      Require all granted
+   </IfModule>
+   <IfModule !mod_authz_core.c>
+      Order allow,deny
+      Allow from all
+   </IfModule>
+</Files>
+
+# vendor/ inteiro fica fechado (README, composer.json, exemplos).
+<IfModule mod_rewrite.c>
+   RewriteEngine On
+   RewriteRule ^vendor(/|$) - [F,L]
+</IfModule>
