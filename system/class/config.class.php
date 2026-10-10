@@ -88,7 +88,7 @@
             
             //Carrega todo o arquivo config na memória
             } else {
-               $this->cache = parse_ini_file( $this->file, true );
+               $this->cache = $this->read();
 
                foreach( $this->cache as $i => $a ){
                   foreach( $a as $ii => $aa ){
@@ -101,21 +101,38 @@
 			}
          
          
-         //Salva o cache devolta no arquivo
+         //Lê o arquivo com trava compartilhada, para não ver um save() pela metade
+         private function read(){
+
+            $f = @fopen( $this->file, 'r' );
+            if( $f === false ) return array();
+
+            flock( $f, LOCK_SH );
+            $content = stream_get_contents( $f );
+            flock( $f, LOCK_UN );
+            fclose( $f );
+
+            $data = parse_ini_string( (string) $content, true );
+            return is_array( $data ) ? $data : array();
+
+         }
+
+
+         //Salva o cache devolta no arquivo, com trava exclusiva (LOCK_EX)
          function save(){
-            
-            $f = fopen( $this->file, 'w+' );
-            
+
+            $content = '';
             foreach( $this->cache as $ci => $ck ){
-               if( count( $ck ) > 0 ){
-                  fwrite( $f, "\n[" . $ci . "]\n" );
+               if( is_array( $ck ) && count( $ck ) > 0 ){
+                  $content .= "\n[" . $ci . "]\n";
                   foreach( $ck as $ki => $kk ){
-                     fwrite( $f, $ki . '="' . urlencode($kk) . "\"\n" );
+                     $content .= $ki . '="' . urlencode($kk) . "\"\n";
                   }
                }
             }
-            fclose( $f );
-            
+
+            return file_put_contents( $this->file, $content, LOCK_EX ) !== false;
+
          }
 			
 			
