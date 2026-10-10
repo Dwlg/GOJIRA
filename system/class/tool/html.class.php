@@ -7,19 +7,38 @@
 		class Tool_Html{
 			
 			
-			//Escapa um valor para conteúdo ou atributo HTML. Entidades que já vêm
-			//no valor são mantidas (sem escape duplo); valor simples sai igual.
+			//Escapa um valor para texto ou atributo HTML entre aspas. Só serve para
+			//contexto HTML: não protege JavaScript (<script>, on*), CSS nem o esquema
+			//de uma URL (use escapeUrl para href/src). Valor simples sai igual.
 			static function escapeAttr( $value ){
 				if( !is_scalar( $value ) ) return '';
-				return htmlspecialchars( (string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8', false );
+				return htmlspecialchars( (string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8' );
 			}
 			
 			
-			//Escapa uma URL para href/src sem mexer no "&" que separa os parâmetros:
-			//só aspas e sinais de tag são trocados, então URL simples sai igual.
+			//Escapa uma URL para href/src. Só aceita http:, https:, mailto: e URL sem
+			//esquema (relativa ou //host); qualquer outro esquema vira '#'. Mantém o
+			//"&" que separa os parâmetros, então URL simples sai igual.
 			static function escapeUrl( $value ){
 				if( !is_scalar( $value ) ) return '';
-				return strtr( (string)$value, [ '"' => '&quot;', "'" => '&#039;', '<' => '&lt;', '>' => '&gt;' ] );
+				$value = (string)$value;
+				if( !self::isSafeUrlScheme( $value ) ) return '#';
+				return strtr( $value, [ '"' => '&quot;', "'" => '&#039;', '<' => '&lt;', '>' => '&gt;' ] );
+			}
+			
+			
+			//Lê o esquema como o navegador: decodifica entidades e ignora espaços e
+			//caracteres de controle (o navegador os descarta antes de ler o esquema).
+			private static function isSafeUrlScheme( $url ){
+				//Referência numérica sem ";" também é lida pelo navegador
+				$plain = preg_replace_callback( '/&#(x[0-9a-f]+|[0-9]+);?/i', function( $m ){
+					$code = ( strtolower( $m[1][0] ) === 'x' ? hexdec( substr( $m[1], 1 ) ) : (int)$m[1] );
+					return ( $code > 0 && $code < 0x110000 ) ? html_entity_decode( '&#' . (int)$code . ';', ENT_QUOTES | ENT_HTML5, 'UTF-8' ) : '';
+				}, $url );
+				$plain = html_entity_decode( $plain, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+				$plain = strtolower( preg_replace( '/[\x00-\x20\x7F]+|\xC2\xA0/', '', $plain ) );
+				if( !preg_match( '/\A([a-z][a-z0-9+.\-]*):/', $plain, $m ) ) return true;   //sem esquema
+				return in_array( $m[1], [ 'http', 'https', 'mailto' ], true );
 			}
 			
 			

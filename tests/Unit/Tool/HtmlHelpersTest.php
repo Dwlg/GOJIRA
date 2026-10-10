@@ -66,7 +66,7 @@ final class HtmlHelpersTest extends TestCase
     {
         self::assertSame('Texto simples 123', \Tool_Html::escapeAttr('Texto simples 123'));
         self::assertSame('&quot;&gt;&lt;b&gt;marcador&lt;/b&gt;', \Tool_Html::escapeAttr(self::MARKUP));
-        self::assertSame('a &amp; b &amp; c', \Tool_Html::escapeAttr('a & b &amp; c'), 'entidade existente não é escapada de novo');
+        self::assertSame('a &amp; b &amp;amp; c', \Tool_Html::escapeAttr('a & b &amp; c'), 'texto, não HTML: o "&" de uma entidade também é escapado');
         self::assertSame('&#039;', \Tool_Html::escapeAttr("'"));
         self::assertSame('560', \Tool_Html::escapeAttr(560));
         self::assertSame('', \Tool_Html::escapeAttr(['x']));
@@ -76,6 +76,72 @@ final class HtmlHelpersTest extends TestCase
     {
         self::assertSame('lista/?id=1&view=2&pag=', \Tool_Html::escapeUrl('lista/?id=1&view=2&pag='));
         self::assertSame('x&quot;&gt;&lt;b&gt;&#039;', \Tool_Html::escapeUrl('x"><b>\''));
+    }
+
+    /** @return array<string, array{string}> */
+    public function allowedUrls(): array
+    {
+        return [
+            'relativa'          => ['lista/?id=1&pag=2'],
+            'raiz'              => ['/home/index/'],
+            'sem esquema'       => ['//cdn.test/a.js'],
+            'http'              => ['http://ex.test/a?b=1&c=2'],
+            'https maiúsculo'   => ['HTTPS://ex.test/'],
+            'mailto'            => ['mailto:a@ex.test'],
+            'âncora'            => ['#topo'],
+            'dois-pontos depois da barra' => ['pasta/a:b'],
+            'query com dois-pontos'       => ['?t=10:30'],
+        ];
+    }
+
+    /** @dataProvider allowedUrls */
+    public function testEscapeUrlKeepsAllowedSchemes(string $url): void
+    {
+        self::assertSame($url, \Tool_Html::escapeUrl($url));
+    }
+
+    /**
+     * Esquemas fora da lista, nas grafias que o navegador ainda lê como esquema.
+     * O conteúdo depois do esquema é um marcador inofensivo.
+     *
+     * @return array<string, array{string}>
+     */
+    public function refusedUrls(): array
+    {
+        return [
+            'javascript'             => ['javascript:void(0)'],
+            'maiúsculas'             => ['JavaScript:void(0)'],
+            'espaço antes'           => ["  javascript:void(0)"],
+            'tab no meio'            => ["java\tscript:void(0)"],
+            'quebra de linha'        => ["java\nscript:void(0)"],
+            'controle no início'     => ["\x01javascript:void(0)"],
+            'entidade decimal'       => ['&#106;avascript:void(0)'],
+            'entidade sem ponto e vírgula' => ['&#106avascript:void(0)'],
+            'entidade hexadecimal'   => ['&#x6A;avascript:void(0)'],
+            'dois-pontos em entidade' => ['javascript&colon;void(0)'],
+            'data'                   => ['data:text/plain,marcador'],
+            'vbscript'               => ['VBScript:marcador'],
+            'outro esquema'          => ['file:///etc/hostname'],
+        ];
+    }
+
+    /** @dataProvider refusedUrls */
+    public function testEscapeUrlRefusesOtherSchemes(string $url): void
+    {
+        self::assertSame('#', \Tool_Html::escapeUrl($url));
+    }
+
+    public function testHelpersDoNotLinkToRefusedSchemes(): void
+    {
+        $out = $this->html()->pagination(20, 10, 'javascript:void(0)', 1, true)
+            . $this->output(function () {
+                $this->html()->columnHeader('JAVASCRIPT:void(0)/', 'x', false, 'name', 'Nome');
+                $this->html()->load('js', 'data:text/plain,x', false, true);
+                $this->html()->getSeo('T', 'D', 'K', 'all', 'all', 'javascript:void(0)');
+            });
+
+        self::assertStringNotContainsStringIgnoringCase('javascript:', $out);
+        self::assertStringNotContainsString('data:', $out);
     }
 
     // ---- pagination --------------------------------------------------------
