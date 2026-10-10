@@ -14,8 +14,18 @@
       # linha de comentário
    Não há interpolação de variáveis nem valor em várias linhas.
 
-   Uma variável que já existe no ambiente (getenv ou $_ENV) não é
-   sobrescrita, a menos que load() receba $override = true.
+   Os valores ficam em $_ENV e num array interno; putenv() não é usado,
+   para não alterar o ambiente do processo (e de processos filhos).
+   Chaves PATH, LD_* e HTTP_* são recusadas. Uma variável que já existe no
+   ambiente (getenv, $_ENV ou $_SERVER) não é sobrescrita, a menos que
+   load() receba $override = true.
+
+   Política de configuração insegura (reportIssue), na 1.x:
+      ENVIRONMENT=DEV ................ só registro no error_log
+      outro ENVIRONMENT .............. error_log e E_USER_WARNING a cada requisição
+      PROD/PRODUCTION ou flag ........ exceção: o boot é recusado
+   A flag é GOJIRA_STRICT_CONFIG (constante true ou variável de ambiente
+   1/true/on/yes). Na 2.0 o boot passa a ser recusado sempre.
 
    O .env nunca deve ficar acessível pela web: mantenha-o fora do webroot
    (o project_demo/.htaccess nega arquivos que começam com ponto).
@@ -34,8 +44,12 @@ final class Gojira_Env {
    ];
 
 
+   /** Valores carregados do .env (têm precedência em get()). */
+   private static $vars = [];
+
+
    /**
-    * Carrega o arquivo no ambiente (putenv e $_ENV).
+    * Carrega o arquivo em $_ENV e no array interno.
     * Retorna as chaves efetivamente definidas. Arquivo ausente: retorna [].
     */
    public static function load( string $file, bool $override = false ): array {
@@ -47,14 +61,66 @@ final class Gojira_Env {
 
       $loaded = [];
       foreach( self::parse( $content ) as $key => $value ){
-         if( ! $override && self::exists( $key ) ) continue;
+         if( self::isForbiddenKey( $key ) ){
+            trigger_error( 'Gojira_Env: chave ' . $key . ' recusada no .env', E_USER_WARNING );
+            continue;
+         }
+         if( ! $override && ( isset( self::$vars[ $key ] ) || self::existsInEnvironment( $key ) ) ) continue;
 
-         putenv( $key . '=' . $value );
-         $_ENV[ $key ] = $value;
+         self::$vars[ $key ] = $value;
+         $_ENV[ $key ]       = $value;
          $loaded[] = $key;
       }
 
       return $loaded;
+   }
+
+
+   /**
+    * Carrega o primeiro arquivo existente da lista e devolve o caminho dele
+    * (ou null se nenhum existir).
+    */
+   public static function loadFirst( array $files, bool $override = false ): ?string {
+      foreach( $files as $file ){
+         if( is_string( $file ) && $file !== '' && is_file( $file ) ){
+            self::load( $file, $override );
+            return $file;
+         }
+      }
+      return null;
+   }
+
+
+   /**
+    * O arquivo fica dentro do DOCUMENT_ROOT do servidor web? Sem
+    * DOCUMENT_ROOT (CLI) ou com pasta inexistente, responde false.
+    */
+   public static function servedByWeb( string $file, array $server ): bool {
+      if( empty( $server['DOCUMENT_ROOT'] ) || ! is_string( $server['DOCUMENT_ROOT'] ) ) return false;
+
+      $root = realpath( $server['DOCUMENT_ROOT'] );
+      $dir  = realpath( dirname( $file ) );
+      if( $root === false || $dir === false ) return false;
+
+      $root = rtrim( str_replace( '\\', '/', $root ), '/' ) . '/';
+      $dir  = rtrim( str_replace( '\\', '/', $dir ), '/' ) . '/';
+      return strncmp( $dir, $root, strlen( $root ) ) === 0;
+   }
+
+
+   /** Esquece os valores carregados (uso em testes). */
+   public static function reset(): void {
+      foreach( self::$vars as $key => $value ){
+         if( isset( $_ENV[ $key ] ) && $_ENV[ $key ] === $value ) unset( $_ENV[ $key ] );
+      }
+      self::$vars = [];
+   }
+
+
+   /** PATH, LD_* e HTTP_* não podem vir do .env. */
+   public static function isForbiddenKey( string $key ): bool {
+      $upper = strtoupper( $key );
+      return $upper === 'PATH' || strncmp( $upper, 'LD_', 3 ) === 0 || strncmp( $upper, 'HTTP_', 5 ) === 0;
    }
 
 
@@ -91,8 +157,16 @@ final class Gojira_Env {
    }
 
 
-   /** Lê do ambiente (getenv, $_ENV, $_SERVER), com valor padrão. */
+   /**
+    * Lê o valor: .env carregado, getenv, $_ENV e $_SERVER, com valor padrão.
+    * Chaves HTTP_* devolvem sempre o padrão: em CGI/FPM elas são cabeçalhos
+    * da requisição, controlados pelo cliente.
+    */
    public static function get( string $key, $default = null ){
+
+      if( strncmp( strtoupper( $key ), 'HTTP_', 5 ) === 0 ) return $default;
+
+      if( array_key_exists( $key, self::$vars ) ) return self::$vars[ $key ];
 
       $value = getenv( $key );
       if( $value !== false ) return $value;
@@ -104,6 +178,43 @@ final class Gojira_Env {
    }
 
 
+   /** ENVIRONMENT é PROD ou PRODUCTION? */
+   public static function isProduction( string $environment ): bool {
+      return in_array( strtoupper( trim( $environment ) ), [ 'PROD', 'PRODUCTION' ], true );
+   }
+
+
+   /** GOJIRA_STRICT_CONFIG ligado (constante ou variável de ambiente)? */
+   public static function strictConfig(): bool {
+      if( defined( 'GOJIRA_STRICT_CONFIG' ) ) return (bool) constant( 'GOJIRA_STRICT_CONFIG' );
+      $v = self::get( 'GOJIRA_STRICT_CONFIG' );
+      return is_string( $v ) && in_array( strtolower( trim( $v ) ), [ '1', 'true', 'on', 'yes' ], true );
+   }
+
+
+   /**
+    * Aplica a política de configuração insegura descrita no topo do arquivo.
+    * Retorna o que foi feito: 'log', 'warning' (ou 'none' com $logInDev
+    * false em DEV). Em PROD/PRODUCTION ou com a flag, lança RuntimeException.
+    */
+   public static function reportIssue( string $message, string $environment, bool $logInDev = true ): string {
+
+      if( self::isProduction( $environment ) || self::strictConfig() ){
+         throw new RuntimeException( $message );
+      }
+
+      if( strtoupper( trim( $environment ) ) === 'DEV' ){
+         if( ! $logInDev ) return 'none';
+         error_log( 'GOJIRA: ' . $message );
+         return 'log';
+      }
+
+      error_log( 'GOJIRA: ' . $message );
+      trigger_error( $message, E_USER_WARNING );
+      return 'warning';
+   }
+
+
    /** O valor é um placeholder conhecido (comparação sem diferenciar maiúsculas)? */
    public static function isPlaceholder( $value ): bool {
       if( ! is_string( $value ) || $value === '' ) return false;
@@ -112,10 +223,9 @@ final class Gojira_Env {
 
 
    /**
-    * Confere credenciais contra os placeholders conhecidos.
-    * $values: nome legível (ex.: 'DB_PWD') => valor.
-    * Fora de DEV lança RuntimeException citando os nomes; em DEV só devolve
-    * a lista, para quem chamou registrar o aviso.
+    * Confere credenciais contra os placeholders conhecidos e aplica a
+    * política de reportIssue(). $values: nome legível (ex.: 'DB_PWD') => valor.
+    * Devolve os nomes encontrados.
     */
    public static function checkPlaceholders( array $values, string $environment ): array {
 
@@ -124,10 +234,11 @@ final class Gojira_Env {
          if( self::isPlaceholder( $value ) ) $found[] = (string) $name;
       }
 
-      if( $found && strtoupper( trim( $environment ) ) !== 'DEV' ){
-         throw new RuntimeException(
-            'Configuração com valor de exemplo fora do ambiente DEV: ' . implode( ', ', $found )
-            . '. Defina o valor real no .env ou nas variáveis de ambiente.'
+      if( $found ){
+         self::reportIssue(
+            'Configuração com valor de exemplo: ' . implode( ', ', $found )
+            . '. Defina o valor real no .env ou nas variáveis de ambiente.',
+            $environment
          );
       }
 
@@ -135,8 +246,8 @@ final class Gojira_Env {
    }
 
 
-   private static function exists( string $key ): bool {
-      return getenv( $key ) !== false || array_key_exists( $key, $_ENV );
+   private static function existsInEnvironment( string $key ): bool {
+      return getenv( $key ) !== false || array_key_exists( $key, $_ENV ) || array_key_exists( $key, $_SERVER );
    }
 
 

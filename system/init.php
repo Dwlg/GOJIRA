@@ -34,7 +34,8 @@
       $globals->smarty = new \Smarty\Smarty();
 
       //Host fora de TRUSTED_HOSTS (quando configurado) recebe 400 antes de qualquer uso do Host
-      if( PHP_SAPI !== 'cli' && ! Gojira_Host::isTrusted( Gojira_Host::requestHost( $_SERVER ), Gojira_Host::trustedHosts( $globals->cfg, PROJECT_ID . '_ENGINE' ) ) ){
+      $trustedHosts = Gojira_Host::trustedHosts( $globals->cfg, PROJECT_ID . '_ENGINE' );
+      if( PHP_SAPI !== 'cli' && ! Gojira_Host::isTrusted( Gojira_Host::requestHost( $_SERVER ), $trustedHosts ) ){
          http_response_code( 400 );
          header( 'Content-Type: text/plain; charset=utf-8' );
          echo 'Bad Request';
@@ -42,8 +43,11 @@
       }
 
       //URL base: $baseURL da aplicação, GOJIRA_BASE_URL, app_configs.ini ou detectada.
-      //A detectada pelo Host não é mais gravada no app_configs.ini.
-      $baseURL = Gojira_Host::resolveBaseUrl( $globals->cfg, PROJECT_ID . '_ENGINE', isset( $baseURL ) ? (string) $baseURL : null, $_SERVER, PHP_SAPI );
+      //A detectada pelo Host não é mais gravada no app_configs.ini. Detectada sem
+      //TRUSTED_HOSTS: aviso fora de DEV, recusa em PROD/PRODUCTION ou com GOJIRA_STRICT_CONFIG.
+      $baseURL = Gojira_Host::resolveBaseUrl( $globals->cfg, PROJECT_ID . '_ENGINE', isset( $baseURL ) ? (string) $baseURL : null, $_SERVER, PHP_SAPI, $baseURLSource );
+      Gojira_Host::checkBaseUrlSource( $baseURLSource, $trustedHosts, defined( 'ENVIRONMENT' ) ? (string) ENVIRONMENT : 'DEV' );
+      unset( $baseURLSource, $trustedHosts );
 
 
       //Se não tiver a url do sistema, gera agora
@@ -74,14 +78,13 @@
          $globals->db = $globals->database;     //DEPRECADO - na lista de remoção em versões futuras. Carlsom A. Soares - 2019-09-15
       }
 
-      //Credenciais com valor de exemplo: exceção fora de DEV, aviso no log em DEV
-      $placeholders = Gojira_Env::checkPlaceholders(
+      //Credenciais com valor de exemplo: log em DEV, aviso fora de DEV,
+      //boot recusado em PROD/PRODUCTION ou com GOJIRA_STRICT_CONFIG (ver Gojira_Env)
+      Gojira_Env::checkPlaceholders(
          [ 'DB_USER ($globals->database->user)'    => isset( $globals->database->user )     ? $globals->database->user     : '',
            'DB_PWD ($globals->database->password)' => isset( $globals->database->password ) ? $globals->database->password : '' ],
          defined( 'ENVIRONMENT' ) ? (string) ENVIRONMENT : 'DEV'
       );
-      if( $placeholders ) error_log( 'GOJIRA: configuração com valor de exemplo: ' . implode( ', ', $placeholders ) . '. Defina o valor real no .env ou no ambiente.' );
-      unset( $placeholders );
 
       //Verifica se tem os dados para conexão
       if( isset( $globals->database ) ){

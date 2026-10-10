@@ -17,14 +17,23 @@ final class EnvTest extends TestCase
     /** @var string */
     private $dir;
 
+    /** @var string|false */
+    private $errorLog;
+
     protected function setUp(): void
     {
         $this->dir = sys_get_temp_dir() . '/gojira-env-' . bin2hex(random_bytes(6));
         mkdir($this->dir);
+        \Gojira_Env::reset();
+        putenv('GOJIRA_STRICT_CONFIG');
+        $this->errorLog = ini_set('error_log', $this->dir . '/error.log');
     }
 
     protected function tearDown(): void
     {
+        ini_set('error_log', (string) $this->errorLog);
+        \Gojira_Env::reset();
+        putenv('GOJIRA_STRICT_CONFIG');
         foreach ($this->keys as $k) {
             putenv($k);
             unset($_ENV[$k], $_SERVER[$k]);
@@ -112,15 +121,80 @@ final class EnvTest extends TestCase
         self::assertSame([], \Gojira_Env::load($this->dir . '/nao-existe.env'));
     }
 
-    public function testLoadDefinesGetenvAndEnv(): void
+    public function testLoadFillsEnvAndInternalArrayWithoutPutenv(): void
     {
         $k = $this->key('LOAD');
         $loaded = \Gojira_Env::load($this->envFile($k . "=valor\n"));
 
         self::assertSame([$k], $loaded);
-        self::assertSame('valor', getenv($k));
+        self::assertFalse(getenv($k));
         self::assertSame('valor', $_ENV[$k]);
         self::assertSame('valor', \Gojira_Env::get($k));
+    }
+
+    public function testForbiddenKeysAreRefused(): void
+    {
+        $k = $this->key('OK');
+        $warnings = [];
+        set_error_handler(static function (int $no, string $msg) use (&$warnings): bool {
+            $warnings[] = $msg;
+            return true;
+        }, E_USER_WARNING);
+        try {
+            $loaded = \Gojira_Env::load($this->envFile(
+                "PATH=/tmp/x\nLD_PRELOAD=/tmp/x.so\nld_library_path=/tmp\nHTTP_HOST=evil.example\n" . $k . "=1\n"
+            ));
+        } finally {
+            restore_error_handler();
+        }
+
+        self::assertSame([$k], $loaded);
+        self::assertCount(4, $warnings);
+        self::assertNotSame('/tmp/x.so', $_ENV['LD_PRELOAD'] ?? null);
+        self::assertNotSame('evil.example', $_ENV['HTTP_HOST'] ?? null);
+        self::assertNotSame('/tmp/x', \Gojira_Env::get('PATH'));
+    }
+
+    public function testGetNeverReadsHttpKeysFromServer(): void
+    {
+        $_SERVER['HTTP_GOJIRA_T_HEADER'] = 'do-cliente';
+        try {
+            self::assertSame('padrao', \Gojira_Env::get('HTTP_GOJIRA_T_HEADER', 'padrao'));
+            self::assertSame('padrao', \Gojira_Env::get('http_gojira_t_header', 'padrao'));
+        } finally {
+            unset($_SERVER['HTTP_GOJIRA_T_HEADER']);
+        }
+    }
+
+    public function testLoadFirstUsesTheFirstExistingFile(): void
+    {
+        $k = $this->key('FIRST');
+        $second = $this->dir . '/segundo.env';
+        file_put_contents($second, $k . "=segundo\n");
+        file_put_contents($this->dir . '/terceiro.env', $k . "=terceiro\n");
+
+        $used = \Gojira_Env::loadFirst([null, '', $this->dir . '/nao-existe.env', $second, $this->dir . '/terceiro.env']);
+
+        self::assertSame($second, $used);
+        self::assertSame('segundo', \Gojira_Env::get($k));
+        self::assertNull(\Gojira_Env::loadFirst([null, $this->dir . '/nao-existe.env']));
+    }
+
+    public function testServedByWeb(): void
+    {
+        mkdir($this->dir . '/www');
+        mkdir($this->dir . '/www/app');
+        $server = ['DOCUMENT_ROOT' => $this->dir . '/www'];
+        try {
+            self::assertTrue(\Gojira_Env::servedByWeb($this->dir . '/www/.env', $server));
+            self::assertTrue(\Gojira_Env::servedByWeb($this->dir . '/www/app/.env', $server));
+            self::assertFalse(\Gojira_Env::servedByWeb($this->dir . '/.env', $server));
+            self::assertFalse(\Gojira_Env::servedByWeb($this->dir . '/www-irmao/.env', $server));
+            self::assertFalse(\Gojira_Env::servedByWeb($this->dir . '/www/.env', []));
+        } finally {
+            rmdir($this->dir . '/www/app');
+            rmdir($this->dir . '/www');
+        }
     }
 
     public function testLoadDoesNotOverrideTheEnvironment(): void
@@ -148,7 +222,8 @@ final class EnvTest extends TestCase
         putenv($k . '=do-servidor');
 
         \Gojira_Env::load($this->envFile($k . "=do-arquivo\n"), true);
-        self::assertSame('do-arquivo', getenv($k));
+        self::assertSame('do-arquivo', \Gojira_Env::get($k));
+        self::assertSame('do-servidor', getenv($k));
     }
 
     public function testGetFallsBackToDefaultThenServer(): void
@@ -184,24 +259,97 @@ final class EnvTest extends TestCase
         self::assertSame($expected, \Gojira_Env::isPlaceholder($value));
     }
 
-    public function testPlaceholderOutsideDevThrowsCitingTheConstant(): void
+    /** @return string[] */
+    private function captureWarnings(callable $fn): array
+    {
+        $warnings = [];
+        set_error_handler(static function (int $no, string $msg) use (&$warnings): bool {
+            $warnings[] = $msg;
+            return true;
+        }, E_USER_WARNING);
+        try {
+            $fn();
+        } finally {
+            restore_error_handler();
+        }
+        return $warnings;
+    }
+
+    /** @return array<string, array{string}> */
+    public function productionProvider(): array
+    {
+        return ['PROD' => ['PROD'], 'PRODUCTION' => ['production'], 'com espaço' => [' Prod ']];
+    }
+
+    /** @dataProvider productionProvider */
+    public function testPlaceholderInProductionRefusesTheBootCitingTheConstant(string $environment): void
     {
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('DB_PWD');
 
-        \Gojira_Env::checkPlaceholders(['DB_USER' => 'app', 'DB_PWD' => 'db_host'], 'PROD');
+        \Gojira_Env::checkPlaceholders(['DB_USER' => 'app', 'DB_PWD' => 'db_host'], $environment);
     }
 
-    public function testPlaceholderInDevOnlyReportsTheList(): void
+    public function testPlaceholderOutsideDevOnlyWarns(): void
     {
-        self::assertSame(
-            ['DB_USER', 'DB_PWD'],
-            \Gojira_Env::checkPlaceholders(['DB_USER' => 'db_user', 'DB_PWD' => 'db_host'], 'dev')
-        );
+        $found = null;
+        $warnings = $this->captureWarnings(static function () use (&$found): void {
+            $found = \Gojira_Env::checkPlaceholders(['DB_USER' => 'app', 'DB_PWD' => 'db_host'], 'HOMOLOG');
+        });
+
+        self::assertSame(['DB_PWD'], $found);
+        self::assertCount(1, $warnings);
+        self::assertStringContainsString('DB_PWD', $warnings[0]);
+        self::assertStringContainsString('DB_PWD', (string) file_get_contents($this->dir . '/error.log'));
     }
 
-    public function testRealCredentialsPassOutsideDev(): void
+    public function testPlaceholderInDevOnlyLogs(): void
     {
+        $found = null;
+        $warnings = $this->captureWarnings(static function () use (&$found): void {
+            $found = \Gojira_Env::checkPlaceholders(['DB_USER' => 'db_user', 'DB_PWD' => 'db_host'], 'dev');
+        });
+
+        self::assertSame(['DB_USER', 'DB_PWD'], $found);
+        self::assertSame([], $warnings);
+        self::assertStringContainsString('DB_USER, DB_PWD', (string) file_get_contents($this->dir . '/error.log'));
+    }
+
+    public function testStrictFlagRefusesTheBootEvenInDev(): void
+    {
+        putenv('GOJIRA_STRICT_CONFIG=1');
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('DB_PWD');
+
+        \Gojira_Env::checkPlaceholders(['DB_PWD' => 'db_host'], 'DEV');
+    }
+
+    /** @return array<string, array{string, bool}> */
+    public function strictProvider(): array
+    {
+        return ['1' => ['1', true], 'true' => ['TRUE', true], 'on' => ['on', true], '0' => ['0', false], 'vazio' => ['', false]];
+    }
+
+    /** @dataProvider strictProvider */
+    public function testStrictFlagValues(string $value, bool $expected): void
+    {
+        putenv('GOJIRA_STRICT_CONFIG=' . $value);
+        self::assertSame($expected, \Gojira_Env::strictConfig());
+    }
+
+    public function testReportIssueOutcomes(): void
+    {
+        self::assertSame('log', \Gojira_Env::reportIssue('x', 'DEV'));
+        self::assertSame('none', \Gojira_Env::reportIssue('x', 'DEV', false));
+        $warnings = $this->captureWarnings(static function (): void {
+            self::assertSame('warning', \Gojira_Env::reportIssue('problema', 'HOMOLOG', false));
+        });
+        self::assertSame(['problema'], $warnings);
+    }
+
+    public function testRealCredentialsPassEverywhere(): void
+    {
+        putenv('GOJIRA_STRICT_CONFIG=1');
         self::assertSame([], \Gojira_Env::checkPlaceholders(['DB_USER' => 'app', 'DB_PWD' => 's3nh4-real'], 'PROD'));
     }
 }

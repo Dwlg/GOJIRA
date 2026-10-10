@@ -24,14 +24,23 @@ final class HostTest extends TestCase
         mkdir($this->dir);
         putenv('GOJIRA_BASE_URL');
         putenv('GOJIRA_TRUSTED_HOSTS');
+        putenv('GOJIRA_STRICT_CONFIG');
         unset($_ENV['GOJIRA_BASE_URL'], $_ENV['GOJIRA_TRUSTED_HOSTS'], $_SERVER['GOJIRA_BASE_URL'], $_SERVER['GOJIRA_TRUSTED_HOSTS']);
+        \Gojira_Env::reset();
+        $this->errorLog = ini_set('error_log', $this->dir . 'error.log');
     }
+
+    /** @var string|false */
+    private $errorLog;
 
     protected function tearDown(): void
     {
+        ini_set('error_log', (string) $this->errorLog);
         putenv('GOJIRA_BASE_URL');
         putenv('GOJIRA_TRUSTED_HOSTS');
+        putenv('GOJIRA_STRICT_CONFIG');
         @unlink($this->dir . 'app_configs.ini');
+        @unlink($this->dir . 'error.log');
         rmdir($this->dir);
     }
 
@@ -58,6 +67,17 @@ final class HostTest extends TestCase
             'IPv6 com porta'       => [['HTTP_HOST' => '[::1]:8080'], '[::1]'],
             'ponto final'          => [['HTTP_HOST' => 'exemplo.com.'], 'exemplo.com'],
             'nada'                 => [[], ''],
+            'IPv6 sem porta'       => [['HTTP_HOST' => '[2001:DB8::1]'], '[2001:db8::1]'],
+            'cerquilha'            => [['HTTP_HOST' => 'evil.com#.exemplo.com'], ''],
+            'barra'                => [['HTTP_HOST' => 'evil.com/.exemplo.com'], ''],
+            'arroba'               => [['HTTP_HOST' => 'user@exemplo.com'], ''],
+            'espaço interno'       => [['HTTP_HOST' => 'exemplo.com evil'], ''],
+            'quebra de linha'      => [['HTTP_HOST' => "exemplo.com\nX: y"], ''],
+            'porta não numérica'   => [['HTTP_HOST' => 'exemplo.com:abc'], ''],
+            'pontos seguidos'      => [['HTTP_HOST' => 'a..exemplo.com'], ''],
+            'começa com ponto'     => [['HTTP_HOST' => '.exemplo.com'], ''],
+            'IPv6 malformado'      => [['HTTP_HOST' => '[::1'], ''],
+            'Host inválido, sem fallback para SERVER_NAME' => [['HTTP_HOST' => 'a b', 'SERVER_NAME' => 'ok.com'], ''],
         ];
     }
 
@@ -93,6 +113,96 @@ final class HostTest extends TestCase
     public function testIsTrusted(string $host, string $list, bool $expected): void
     {
         self::assertSame($expected, \Gojira_Host::isTrusted($host, \Gojira_Host::parseList($list)));
+    }
+
+    public function testHostWithInvalidCharactersIsNotTrusted(): void
+    {
+        $host = \Gojira_Host::requestHost(['HTTP_HOST' => 'evil.com#.exemplo.com']);
+        self::assertSame('', $host);
+        self::assertFalse(\Gojira_Host::isTrusted($host, \Gojira_Host::parseList('.exemplo.com, *.exemplo.com')));
+    }
+
+    public function testDetectBaseUrlIgnoresInvalidServerName(): void
+    {
+        self::assertSame('/app/', \Gojira_Host::detectBaseUrl(['SERVER_NAME' => 'evil.com#x', 'SCRIPT_NAME' => '/app/configs.php']));
+    }
+
+    /** @return string[] */
+    private function captureWarnings(callable $fn): array
+    {
+        $warnings = [];
+        set_error_handler(static function (int $no, string $msg) use (&$warnings): bool {
+            $warnings[] = $msg;
+            return true;
+        }, E_USER_WARNING);
+        try {
+            $fn();
+        } finally {
+            restore_error_handler();
+        }
+        return $warnings;
+    }
+
+    public function testResolveReportsTheSource(): void
+    {
+        $cfg = $this->config();
+        \Gojira_Host::resolveBaseUrl($cfg, self::SECTION, null, ['SERVER_NAME' => 'a.com', 'SCRIPT_NAME' => '/i.php'], 'fpm-fcgi', $source);
+        self::assertSame(\Gojira_Host::SOURCE_DETECTED, $source);
+
+        \Gojira_Host::resolveBaseUrl($cfg, self::SECTION, null, [], 'cli', $source);
+        self::assertSame(\Gojira_Host::SOURCE_CLI, $source);
+
+        putenv('GOJIRA_BASE_URL=env.com');
+        \Gojira_Host::resolveBaseUrl($cfg, self::SECTION, null, [], 'fpm-fcgi', $source);
+        self::assertSame(\Gojira_Host::SOURCE_ENV, $source);
+    }
+
+    public function testDetectedWithoutTrustedHostsInDevIsSilent(): void
+    {
+        $warnings = $this->captureWarnings(static function (): void {
+            self::assertSame('none', \Gojira_Host::checkBaseUrlSource(\Gojira_Host::SOURCE_DETECTED, [], 'DEV'));
+        });
+        self::assertSame([], $warnings);
+    }
+
+    public function testDetectedWithoutTrustedHostsOutsideDevWarns(): void
+    {
+        $warnings = $this->captureWarnings(static function (): void {
+            self::assertSame('warning', \Gojira_Host::checkBaseUrlSource(\Gojira_Host::SOURCE_DETECTED, [], 'HOMOLOG'));
+        });
+        self::assertCount(1, $warnings);
+        self::assertStringContainsString('TRUSTED_HOSTS', $warnings[0]);
+        self::assertStringContainsString('TRUSTED_HOSTS', (string) file_get_contents($this->dir . 'error.log'));
+    }
+
+    /** @return array<string, array{string}> */
+    public function refusingEnvironmentProvider(): array
+    {
+        return ['PROD' => ['PROD'], 'PRODUCTION' => ['PRODUCTION']];
+    }
+
+    /** @dataProvider refusingEnvironmentProvider */
+    public function testDetectedWithoutTrustedHostsInProductionRefusesTheBoot(string $environment): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('GOJIRA_BASE_URL');
+        \Gojira_Host::checkBaseUrlSource(\Gojira_Host::SOURCE_DETECTED, [], $environment);
+    }
+
+    public function testDetectedWithoutTrustedHostsAndStrictFlagRefusesTheBoot(): void
+    {
+        putenv('GOJIRA_STRICT_CONFIG=1');
+        $this->expectException(\RuntimeException::class);
+        \Gojira_Host::checkBaseUrlSource(\Gojira_Host::SOURCE_DETECTED, [], 'DEV');
+    }
+
+    public function testConfiguredOrTrustedSourcesPassInProduction(): void
+    {
+        putenv('GOJIRA_STRICT_CONFIG=1');
+        foreach ([\Gojira_Host::SOURCE_EXPLICIT, \Gojira_Host::SOURCE_ENV, \Gojira_Host::SOURCE_CONFIG, \Gojira_Host::SOURCE_CLI] as $source) {
+            self::assertSame('none', \Gojira_Host::checkBaseUrlSource($source, [], 'PROD'));
+        }
+        self::assertSame('none', \Gojira_Host::checkBaseUrlSource(\Gojira_Host::SOURCE_DETECTED, ['app.com'], 'PROD'));
     }
 
     public function testParseListNormalizes(): void

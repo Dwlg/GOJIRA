@@ -39,7 +39,7 @@ final class BootConfigTest extends TestCase
         file_put_contents($script, $code);
 
         $base = getenv();
-        foreach (['ENVIRONMENT', 'DB_NAME', 'DB_HOST', 'DB_USER', 'DB_PWD', 'SMTP_HOST', 'GOJIRA_BASE_URL', 'GOJIRA_TRUSTED_HOSTS'] as $k) {
+        foreach (['GOJIRA_STRICT_CONFIG', 'GOJIRA_ENV_FILE', 'ENVIRONMENT', 'DB_NAME', 'DB_HOST', 'DB_USER', 'DB_PWD', 'SMTP_HOST', 'GOJIRA_BASE_URL', 'GOJIRA_TRUSTED_HOSTS'] as $k) {
             unset($base[$k]);
         }
 
@@ -84,21 +84,51 @@ final class BootConfigTest extends TestCase
         self::assertSame('["PROD","app","db","u","p@ss","smtp.local"]', $out);
     }
 
-    public function testInitRefusesPlaceholderCredentialsOutsideDev(): void
+    private function initScript(string $environment): string
     {
-        $code = '<?php'
-              . ' $absPath = ' . var_export($this->dir, true) . ';'
-              . ' define("PROJECT_ID", "T"); define("ENVIRONMENT", "PROD");'
-              . ' $globals = new stdClass(); $globals->database = new stdClass();'
-              . ' $globals->database->host = "127.0.0.1"; $globals->database->user = "app";'
-              . ' $globals->database->password = "db_host"; $globals->database->name = "x";'
-              . ' try { require ' . var_export(GOJIRA_SYSTEM_PATH . 'init.php', true) . '; echo "BOOTOU"; }'
-              . ' catch (RuntimeException $e) { echo "EXC:" . $e->getMessage(); }';
+        return '<?php'
+             . ' ini_set("error_log", ' . var_export($this->dir . 'error.log', true) . ');'
+             . ' set_error_handler(function ($no, $msg) { if ($no === E_USER_WARNING) { echo "WARN:" . $msg . "\\n"; return true; } return false; });'
+             . ' $absPath = ' . var_export($this->dir, true) . ';'
+             . ' define("PROJECT_ID", "T"); define("ENVIRONMENT", ' . var_export($environment, true) . ');'
+             . ' $globals = new stdClass(); $globals->database = new stdClass();'
+             . ' $globals->database->host = "127.0.0.1"; $globals->database->user = "app";'
+             . ' $globals->database->password = "db_host"; $globals->database->name = "x";'
+             . ' try { require ' . var_export(GOJIRA_SYSTEM_PATH . 'init.php', true) . '; echo "BOOTOU"; }'
+             . ' catch (Throwable $e) { echo "EXC:" . get_class($e) . ":" . $e->getMessage(); }';
+    }
 
-        $out = $this->runPhp($code);
+    /** @return array<string, array{string}> */
+    public function productionProvider(): array
+    {
+        return ['PROD' => ['PROD'], 'PRODUCTION' => ['PRODUCTION']];
+    }
 
-        self::assertStringStartsWith('EXC:', $out);
+    /** @dataProvider productionProvider */
+    public function testInitRefusesPlaceholderCredentialsInProduction(string $environment): void
+    {
+        $out = $this->runPhp($this->initScript($environment));
+
+        self::assertStringStartsWith('EXC:RuntimeException:', $out);
         self::assertStringContainsString('DB_PWD', $out);
         self::assertStringNotContainsString('DB_USER', $out);
+    }
+
+    public function testInitOnlyWarnsAboutPlaceholderOutsideDevAndProduction(): void
+    {
+        $out = $this->runPhp($this->initScript('HOMOLOG'));
+
+        // O aviso sai antes da conexão; o que acontece depois (banco inexistente) não importa aqui.
+        self::assertStringStartsWith('WARN:', $out);
+        self::assertStringContainsString('DB_PWD', strtok($out, "\n"));
+        self::assertStringNotContainsString('EXC:RuntimeException:Configuração com valor de exemplo', $out);
+    }
+
+    public function testInitRefusesPlaceholderWithStrictFlagEvenInDev(): void
+    {
+        $out = $this->runPhp($this->initScript('DEV'), ['GOJIRA_STRICT_CONFIG' => '1']);
+
+        self::assertStringStartsWith('EXC:RuntimeException:', $out);
+        self::assertStringContainsString('DB_PWD', $out);
     }
 }
