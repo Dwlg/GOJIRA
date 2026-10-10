@@ -193,9 +193,18 @@ define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
 
             self::$lastCommand = $sql;
             
-            $query = self::$connection->query( $sql );
+            //No PHP 8.1+ o mysqli lança mysqli_sql_exception com trecho do SQL na
+            //mensagem. O detalhe vai para o log; a exceção leva a mensagem genérica
+            //e o código do erro do banco (ex.: 1062), sem encadear a original.
+            try {
+               $query = self::$connection->query( $sql );
+            } catch( mysqli_sql_exception $e ){
+               $this->logLegacyFailure( 'query', $e->getCode(), $e->getMessage() );
+               throw( new ConnectionException( DB_CONNECTION_INVALID_SQL, $e->getCode() ) );
+            }
             
             if( !is_object($query) && $query === false ){
+               $this->logLegacyFailure( 'query', self::$connection->errno, self::$connection->error );
                throw( new Exception(DB_CONNECTION_INVALID_SQL) );
             }
 
@@ -338,12 +347,30 @@ define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
 				
             self::$lastCommand = $sql;
                         
-				//Executa o comando
-            if( $stmt = self::$connection->prepare( $sql ) ){
-               return $stmt->execute();
+				//Executa o comando. Com o relatório do mysqli desligado (padrão do PHP
+				//8.0) a falha devolve false; com ele ligado (padrão do 8.1+) continua
+				//lançando, mas uma exceção genérica, sem o trecho de SQL da original.
+				//O detalhe vai para o log nos dois casos.
+            try {
+               if( $stmt = self::$connection->prepare( $sql ) ){
+                  if( $stmt->execute() ) return true;
+                  $this->logLegacyFailure( 'execute', $stmt->errno, $stmt->error );
+                  return false;
+               }
+               $this->logLegacyFailure( 'execute', self::$connection->errno, self::$connection->error );
+            } catch( mysqli_sql_exception $e ){
+               $this->logLegacyFailure( 'execute', $e->getCode(), $e->getMessage() );
+               throw( new ConnectionException( DB_CONNECTION_INVALID_SQL, $e->getCode() ) );
             }
             
 				return false;
+         }
+
+
+         //Log das falhas de query()/execute(). Leva o erro do banco, não o SQL montado
+         //(que traz os valores).
+         private function logLegacyFailure( $method, $errno, $error ){
+            error_log( sprintf( '[GOJIRA] Connection::%s falhou (%s): %s', $method, $errno, $error ) );
          }
 
 
