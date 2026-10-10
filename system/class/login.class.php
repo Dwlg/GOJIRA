@@ -1,9 +1,12 @@
 <?php
 
-define( 'LGN_LOGIN_INVALID', "Usuário inválido");
-define( 'LGN_PENDING'      , "Conta com ativação pendente");
-define( 'LGN_INATIVE'      , "Conta desativada");
-define( 'LGN_PASS_INVALID' , "Senha inválida");
+//Usuário inexistente e senha errada têm a mesma mensagem, para a resposta não
+//indicar quais logins existem; os códigos (0x9001 e 0x9003) continuam distintos
+//para log e auditoria. Um projeto pode definir as constantes antes do framework.
+if( !defined( 'LGN_LOGIN_INVALID' ) ) define( 'LGN_LOGIN_INVALID', "Usuário ou senha inválidos");
+if( !defined( 'LGN_PENDING' ) )       define( 'LGN_PENDING'      , "Conta com ativação pendente");
+if( !defined( 'LGN_INATIVE' ) )       define( 'LGN_INATIVE'      , "Conta desativada");
+if( !defined( 'LGN_PASS_INVALID' ) )  define( 'LGN_PASS_INVALID' , "Usuário ou senha inválidos");
 
 define( 'LGN_DEFAULT_USER_TABLE' , 'user' );
 define( 'LGN_DEFAULT_TYPE_TABLE' , 'user_type' );
@@ -33,6 +36,7 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
    require_once( __DIR__ . '/auth/remembertokenstore.interface.php' );
    require_once( __DIR__ . '/auth/remembertokenrecord.class.php' );
    require_once( __DIR__ . '/auth/tableremembertokenstore.class.php' );
+   require_once( __DIR__ . '/auth/requestscheme.class.php' );
    require_once( __DIR__ . '/auth/sessionguard.class.php' );
 
 //TODO - Permitir USAR ou NÃO USAR USER_TYPE
@@ -60,6 +64,15 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
          private $userProviderObj;    //Gojira_UserProvider (lazy)
          private $userProviderCustom = false;  //true quando o projeto injetou um provider próprio
          private static $cookieModeWarned = false;  //aviso de setCookie(true) uma vez por requisição
+         private $rememberStore;            //Gojira_RememberTokenStore|null (revogação no logout e na troca de senha)
+         private $rememberCookies = [];     //tipo => nome do cookie de remember-me
+         private static $dummyHashes = [];  //classe do hasher injetado => hash fictício
+
+         //Hashes fictícios para o login de usuário inexistente, um por formato de
+         //gravação (bcrypt com o custo padrão e legado). Não correspondem a senha
+         //conhecida; servem só para gastar o mesmo tempo de uma verificação real.
+         const DUMMY_BCRYPT_HASH = '$2y$12$xtMRsaNmEQIP6aRLlg4Gne4BP1CohPJQzYKhxnBKvcRsG8y2EpNCO';
+         const DUMMY_LEGACY_HASH = '6c7bad6054b748bb9f5db6b05263440b5afc0554709c5f799e5eaaf1089996d75b910c6e0602a7bf33537840b88980a5b5f4d0762ce55d8d44fad38c761e27f6';
          
 			/***   Construtores ***/
 			function __construct(){
@@ -145,8 +158,60 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 			//Fachada simplificada para um papel/silo de sessão. Ver docs/migration/auth-redesign-migration-guide.md.
 			//$rememberStore é opcional (Fase 4 - remember-me); sem ele, Guard::attempt()
 			//com $remember=true vira no-op e loginByRemember() sempre retorna null.
+			//Com um store, ele e o nome do cookie ficam registrados no Login, que passa a
+			//revogar o remember-me no logout() e todos os tokens do usuário no changePass().
+			//Sem store, usa o registrado em setRememberTokenStore(), se houver.
 			public function guard( string $sessionType, $rememberStore = null, string $rememberCookie = '', int $rememberTtl = 2592000 ): Gojira_Guard {
+
+				if( $rememberStore instanceof Gojira_RememberTokenStore ){
+					$this->rememberStore = $rememberStore;
+				} else {
+					$rememberStore = $this->rememberStore;
+				}
+
+				if( $rememberCookie !== '' ){
+					$this->rememberCookies[ strtoupper( $sessionType ) ] = $rememberCookie;
+				}
+
 				return new Gojira_SessionGuard( $this, $sessionType, $rememberStore, $rememberCookie, $rememberTtl );
+			}
+
+			//Registra o store de remember-me sem criar um guard (ex.: na requisição de
+			//troca de senha), para o changePass() e o logout() revogarem os tokens.
+			public function setRememberTokenStore( Gojira_RememberTokenStore $store ){
+				$this->rememberStore = $store;
+			}
+
+			public function getRememberTokenStore(){
+				return $this->rememberStore;
+			}
+
+			//Nome do cookie de remember-me de um tipo (padrão: remember_<tipo>).
+			public function rememberCookieName( $type ){
+				$key = strtoupper( trim( (string)$type ) );
+				return isset( $this->rememberCookies[ $key ] ) ? $this->rememberCookies[ $key ] : 'remember_' . strtolower( trim( (string)$type ) );
+			}
+
+			//Revoga o token de remember-me do cookie atual de cada tipo e apaga o cookie.
+			private function revokeRememberCookies( $type ){
+
+				if( !( $this->rememberStore instanceof Gojira_RememberTokenStore ) ) return;
+
+				foreach( explode( ',', (string)$type ) as $t ){
+
+					if( trim( $t ) === '' ) continue;
+
+					$name = $this->rememberCookieName( $t );
+					if( !isset( $_COOKIE[ $name ] ) ) continue;
+
+					$parts = explode( ':', (string)$_COOKIE[ $name ], 2 );
+					if( count( $parts ) === 2 && $parts[0] !== '' && strlen( $parts[0] ) <= 128 ){
+						$this->rememberStore->revoke( $parts[0] );
+					}
+
+					$this->sendCookie( $name, '', [ 'expires' => time() - 3600, 'path' => '/', 'secure' => $this->isHttps(), 'httponly' => true, 'samesite' => 'Lax' ] );
+					unset( $_COOKIE[ $name ] );
+				}
 			}
 			
 			
@@ -164,10 +229,29 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 				$user  = $this->userProvider()->findByLogin( $login, $types );
 
 				if( $user === null ){
-					//Usuário inexistente gasta o mesmo trabalho de hash que uma senha errada,
-					//para o tempo de resposta não revelar quais logins existem.
-					if( ! $pwd_hash ) $this->spendHashTime( (string)$pwd );
+					//Usuário inexistente faz uma verificação contra um hash fictício no formato
+					//de gravação configurado, para o tempo de resposta se parecer com o de uma
+					//senha errada e não revelar quais logins existem.
+					if( $pwd_hash ){
+						hash_equals( self::DUMMY_LEGACY_HASH, (string)$pwd );
+					} else {
+						$this->dummyVerify( (string)$pwd );
+					}
 					throw( new Gojira_AuthException( LGN_LOGIN_INVALID, 0x9001, Gojira_AuthException::INVALID_USER ) );
+				}
+
+				//Verifica se o password está correto, antes do status: a situação da conta
+				//(pendente, inativa) só é informada a quem acertou a senha.
+				//$pwd_hash=true: $pwd já é o hash final (ex.: login por chave) -> compara direto.
+				//Caso contrário, valida via hasher (aceita hash moderno OU legado).
+				if( $pwd_hash ){
+					if( ! hash_equals( $user->getAuthPasswordHash(), (string)$pwd ) ){
+						throw( new Gojira_AuthException( LGN_PASS_INVALID, 0x9003, Gojira_AuthException::INVALID_PASSWORD ) );
+					}
+				} else {
+					if( ! $this->hasher()->verify( (string)$pwd, $user->getAuthPasswordHash() ) ){
+						throw( new Gojira_AuthException( LGN_PASS_INVALID, 0x9003, Gojira_AuthException::INVALID_PASSWORD ) );
+					}
 				}
 
 				//Verifica se o usuário está ativo. Com o provider padrão, distinguimos
@@ -188,23 +272,9 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 					throw( new Gojira_AuthException( LGN_INATIVE, 0x9002, Gojira_AuthException::INACTIVE ) );
 				}
 
-				//Verifica se o password está correto.
-				//$pwd_hash=true: $pwd já é o hash final (ex.: login por chave) -> compara direto.
-				//Caso contrário, valida via hasher (aceita hash moderno OU legado) e, se o hash
-				//armazenado estiver legado/desatualizado, migra de forma transparente.
-				if( $pwd_hash ){
-					if( ! hash_equals( $user->getAuthPasswordHash(), (string)$pwd ) ){
-						throw( new Gojira_AuthException( LGN_PASS_INVALID, 0x9003, Gojira_AuthException::INVALID_PASSWORD ) );
-					}
-				} else {
-					if( ! $this->hasher()->verify( (string)$pwd, $user->getAuthPasswordHash() ) ){
-						throw( new Gojira_AuthException( LGN_PASS_INVALID, 0x9003, Gojira_AuthException::INVALID_PASSWORD ) );
-					}
-
-					//Migração de hash legado/desatualizado (opt-in, ver LGN_PASSWORD_REHASH)
-					if( $this->rehash && $this->hasher()->needsRehash( $user->getAuthPasswordHash() ) ){
-						$this->rehashPassword( $user->getAuthId(), $user->getAuthPasswordHash(), (string)$pwd );
-					}
+				//Migração de hash legado/desatualizado (opt-in, ver LGN_PASSWORD_REHASH)
+				if( ! $pwd_hash && $this->rehash && $this->hasher()->needsRehash( $user->getAuthPasswordHash() ) ){
+					$this->rehashPassword( $user->getAuthId(), $user->getAuthPasswordHash(), (string)$pwd );
 				}
 
 				$row = $this->userToRow( $user );
@@ -252,8 +322,10 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 
 			//Detecta HTTPS, para não marcar cookies como Secure numa conexão HTTP (o
 			//navegador simplesmente descartaria o cookie). Ver docs/migration/auth-redesign-migration-guide.md.
+			//HTTPS direto, X-Forwarded-Proto de proxy confiável (GOJIRA_TRUSTED_PROXIES) ou
+			//Secure forçado (GOJIRA_FORCE_SECURE_COOKIES). Ver Gojira_RequestScheme.
 			private function isHttps(): bool {
-				return isset( $_SERVER['HTTPS'] ) && $_SERVER['HTTPS'] !== '' && strtolower( (string)$_SERVER['HTTPS'] ) !== 'off';
+				return Gojira_RequestScheme::isHttps();
 			}
 
 			//Grava um cookie de identidade com HttpOnly (JS não lê), Secure quando
@@ -275,11 +347,29 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 			}
 
 			//Troca o id da sessão mantendo os dados (session fixation). Só age com a
-			//sessão ativa e antes de qualquer saída: depois dela o PHP não consegue
-			//enviar o cookie novo e o id não deve mudar.
+			//sessão ativa. Se já houve saída, o PHP não consegue enviar o cookie novo:
+			//o id não é trocado, e o motivo vai para o log e para um E_USER_WARNING.
 			protected function regenerateSession(): bool {
-				if( session_status() !== PHP_SESSION_ACTIVE || headers_sent() ) return false;
+
+				if( session_status() !== PHP_SESSION_ACTIVE ) return false;
+
+				$file = '';
+				$line = 0;
+				if( $this->headersAlreadySent( $file, $line ) ){
+					$msg = '[GOJIRA] Login: id de sessão não trocado porque já houve saída antes do login/logout'
+					     . ( $file !== '' ? ' (' . $file . ':' . $line . ')' : '' )
+					     . '. Chame login() e logout() antes de enviar conteúdo.';
+					error_log( $msg );
+					trigger_error( $msg, E_USER_WARNING );
+					return false;
+				}
+
 				return session_regenerate_id( true );
+			}
+
+			//headers_sent() isolado para subclasses (ex.: testes).
+			protected function headersAlreadySent( &$file = '', &$line = 0 ): bool {
+				return headers_sent( $file, $line );
 			}
 
 			//Grava a sessão/cookie de identidade (mesmo formato de sempre - ver
@@ -318,6 +408,10 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 			
 			//Remove a sessão do usuario logado
 			function logout( $type ){
+
+				//Revoga o remember-me do cookie atual (quando há store registrado), mesmo
+				//que a sessão já tenha expirado: o cookie não pode reabrir a sessão.
+				$this->revokeRememberCookies( $type );
 
 				if( $this->isLogged( $type ) ){
 
@@ -560,12 +654,23 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 				$this->rehash = ( $enabled == true );
 			}
 
-			//Gasta o custo de gerar um hash no formato de gravação atual (bcrypt com a
-			//flag ligada ou hasher injetado; legado, e barato, com a flag desligada).
-			//Usado quando o usuário não existe: o tempo fica parecido com o de uma
-			//verificação de senha contra um hash do mesmo formato.
-			private function spendHashTime( $plain ){
-				$this->writeHasher()->hash( $plain );
+			//Verificação contra um hash fictício no formato de gravação configurado:
+			//hasher injetado (hash gerado uma vez por processo), bcrypt com
+			//LGN_PASSWORD_REHASH ligada ou legado com ela desligada. Usada quando o
+			//usuário não existe, pelo mesmo caminho de uma verificação real.
+			private function dummyVerify( $plain ){
+
+				if( $this->hasherInjected ){
+					$key = get_class( $this->hasher() );
+					if( !isset( self::$dummyHashes[ $key ] ) ){
+						self::$dummyHashes[ $key ] = $this->hasher()->hash( bin2hex( random_bytes( 16 ) ) );
+					}
+					$dummy = self::$dummyHashes[ $key ];
+				} else {
+					$dummy = $this->rehash ? self::DUMMY_BCRYPT_HASH : self::DUMMY_LEGACY_HASH;
+				}
+
+				return $this->hasher()->verify( $plain, $dummy );
 			}
 
 			//Regrava o hash da senha do usuário com o hasher configurado, pelo UserProvider.
@@ -748,25 +853,34 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 
 				//Falha lança ConnectionException (subclasse de Exception), como o query() antigo.
 				$cryptPass = $this->hashPassword( $pass );
-				return $this->connection->run(
+				$ret = $this->connection->run(
 					'UPDATE `' . $this->userTable . '` SET `password` = ? WHERE `id` = ? LIMIT 1',
 					[ $cryptPass, $userId ]
 				);
+
+				//Senha nova encerra o remember-me em todos os dispositivos: um cookie
+				//copiado antes da troca deixa de valer. Exige o store registrado
+				//(guard() com store ou setRememberTokenStore()).
+				if( $this->rememberStore instanceof Gojira_RememberTokenStore ){
+					$this->rememberStore->revokeAllForUser( $userId );
+				}
+
+				return $ret;
 
          }
          
 			
          //Seta a propriedade useCookie
-         //O modo cookie guarda a identidade em cookies sem assinatura: quem conhece
-         //o id de um usuário ativo consegue montar os cookies. Fica desligado por
-         //padrão; para "lembrar de mim", use o remember-me do Gojira_SessionGuard.
+         //Modo cookie: obsoleto, desligado por padrão. Para manter o usuário logado
+         //entre visitas, use o remember-me do Gojira_SessionGuard. A 2.0 assina ou
+         //remove este modo.
          function setCookie( $val, $cookieTime = ''){
             //Forçar valor lógico
             $this->useCookie  = ($val == true ? true : false);
 
             if( $this->useCookie && !self::$cookieModeWarned ){
                self::$cookieModeWarned = true;
-               trigger_error( 'Login::setCookie(true) está obsoleto: os cookies de identidade não são assinados. Use Login::guard() com um Gojira_RememberTokenStore (remember-me).', E_USER_DEPRECATED );
+               trigger_error( 'Login::setCookie(true) está obsoleto e será alterado na 2.0. Use Login::guard() com um Gojira_RememberTokenStore (remember-me).', E_USER_DEPRECATED );
             }
 
             if( is_numeric( $cookieTime ) )  $this->cookieTime = $cookieTime;

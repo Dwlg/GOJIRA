@@ -14,8 +14,11 @@
 
       public function findBySelector( string $selector ): ?Gojira_RememberToken;
 
-      //Invalida o atual e emite um novo (rotação a cada uso). Retorna [selector, validator].
-      public function rotate( string $selector, $userId, int $ttlSeconds ): array;
+      //Invalida o atual e emite um novo (rotação a cada uso). A invalidação é
+      //atômica e condicionada ao selector e ao hash do validator: retorna
+      //[selector, validator] só para quem consumiu o token, e null se ele já
+      //tinha sido usado ou revogado (ex.: o mesmo cookie em duas requisições).
+      public function rotate( string $selector, string $validatorHash, $userId, int $ttlSeconds ): ?array;
 
       public function revoke( string $selector ): void;
 

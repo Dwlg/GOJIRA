@@ -84,8 +84,18 @@
          return new Gojira_RememberTokenRecord( $row['selector'], $row['validator_hash'], $row['user_id'], (int)$row['expires_at'] );
       }
 
-      public function rotate( string $selector, $userId, int $ttlSeconds ): array {
-         $this->revoke( $selector );
+      //Consome o token num único DELETE condicionado ao selector e ao hash do
+      //validator, e só emite o novo se essa linha foi apagada aqui. Duas
+      //requisições com o mesmo cookie: só uma recebe o token novo.
+      public function rotate( string $selector, string $validatorHash, $userId, int $ttlSeconds ): ?array {
+
+         $this->connection->run(
+            'DELETE FROM `' . $this->table . '` WHERE selector = ? AND validator_hash = ?',
+            [ $selector, $validatorHash ]
+         );
+
+         if( $this->connection->affectedRows() !== 1 ) return null;
+
          return $this->issue( $userId, $ttlSeconds );
       }
 

@@ -19,6 +19,7 @@
 
    require_once( __DIR__ . '/guard.interface.php' );
    require_once( __DIR__ . '/remembertokenstore.interface.php' );
+   require_once( __DIR__ . '/requestscheme.class.php' );
 
    class Gojira_SessionGuard implements Gojira_Guard {
 
@@ -85,26 +86,38 @@
             return null;
          }
 
+         //Usuário removido, de outro tipo ou desativado depois do cookie emitido.
          $user = $this->login->getUserProvider()->findById( $record->getUserId(), [ $this->sessionType ] );
 
-         if( $user === null ){
+         if( $user === null || ! $user->isActive() ){
             $this->rememberStore->revoke( $selector );
             $this->clearRememberCookie();
             return null;
          }
 
+         //Rotação a cada uso, antes de abrir a sessão: o token só vale para quem
+         //o consumir. Se outra requisição já o consumiu, o mesmo cookie foi usado
+         //duas vezes, o que pode indicar cópia do cookie: revoga todos os tokens
+         //do usuário e trata como anônimo.
+         $rotated = $this->rememberStore->rotate( $selector, $record->getValidatorHash(), $record->getUserId(), $this->rememberTtl );
+
+         if( $rotated === null ){
+            $this->rememberStore->revokeAllForUser( $record->getUserId() );
+            $this->clearRememberCookie();
+            return null;
+         }
+
+         [ $newSelector, $newValidator ] = $rotated;
+
          //Abre a sessão através do Login (mesmo formato de sempre - interop total).
-         //Se a conta foi desativada depois do cookie emitido, loginAs() rejeita.
          try{
             $this->login->loginAs( $user );
          } catch( Gojira_AuthException $e ){
-            $this->rememberStore->revoke( $selector );
+            $this->rememberStore->revoke( $newSelector );
             $this->clearRememberCookie();
             return null;
          }
 
-         //Rotação a cada uso: invalida o token antigo e emite um novo.
-         [ $newSelector, $newValidator ] = $this->rememberStore->rotate( $selector, $record->getUserId(), $this->rememberTtl );
          $this->setRememberCookie( $newSelector . ':' . $newValidator, time() + $this->rememberTtl );
 
          return $user;
@@ -135,11 +148,11 @@
 
       public function logout(): void {
 
+         //O Login::logout revoga o remember-me do cookie atual quando o store está
+         //registrado nele (guard() registra). O bloco abaixo cobre um guard criado
+         //direto, com um store que o Login não conhece.
          $this->login->logout( $this->sessionType );
 
-         //Encerrar a sessão também revoga qualquer remember-me ativo desta sessão
-         //(lido do cookie atual, se presente) - evita reabrir sessão sozinha depois
-         //de um logout explícito.
          if( $this->rememberStore instanceof Gojira_RememberTokenStore && isset( $_COOKIE[ $this->rememberCookie ] ) ){
 
             $parts = explode( ':', (string)$_COOKIE[ $this->rememberCookie ], 2 );
@@ -169,8 +182,9 @@
          $this->setRememberCookie( $selector . ':' . $validator, time() + $this->rememberTtl );
       }
 
+      //HTTPS direto, X-Forwarded-Proto de proxy confiável ou Secure forçado.
       private function isHttps(): bool {
-         return isset( $_SERVER['HTTPS'] ) && $_SERVER['HTTPS'] !== '' && strtolower( (string)$_SERVER['HTTPS'] ) !== 'off';
+         return Gojira_RequestScheme::isHttps();
       }
 
       private function setRememberCookie( string $value, int $expires ){
