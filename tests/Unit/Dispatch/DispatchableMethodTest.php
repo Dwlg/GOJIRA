@@ -84,7 +84,7 @@ final class DispatchableMethodTest extends TestCase
             // Estáticos de Controller e GojiraCore
             'setAccessPolicy', 'setaccesspolicy', 'SETACCESSPOLICY', 'getAccessPolicy',
             'Load', 'load', 'Call', 'CALL', 'Exists', 'isSafeName', 'confinedFile',
-            'isDispatchable',
+            'isDispatchable', 'postDispatch',
             // Estático declarado no próprio controller
             'estatico', 'ESTATICO',
             // Não público no AppController do projeto

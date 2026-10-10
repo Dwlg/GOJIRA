@@ -180,6 +180,32 @@
          }
 
 
+         //Despacho legado por $_POST['class'] / $_POST['proc'] (usado pelo init.php).
+         //Devolve [class, proc] quando o POST pede o despacho, ou null quando não pede
+         //ou quando o projeto define GOJIRA_DISABLE_POST_DISPATCH (aí o despacho segue
+         //pela URL). O uso emite um E_USER_DEPRECATED por requisição.
+         //$disabled só existe para os testes; null lê a constante.
+         static function postDispatch( $post, $disabled = null ){
+
+            static $warned = false;
+
+            if( $disabled === null ){
+               $disabled = defined( 'GOJIRA_DISABLE_POST_DISPATCH' ) && GOJIRA_DISABLE_POST_DISPATCH;
+            }
+
+            if( $disabled || !is_array( $post ) || !isset( $post['class'] ) ){
+               return null;
+            }
+
+            if( !$warned ){
+               $warned = true;
+               trigger_error( 'GOJIRA: o despacho por $_POST[\'class\'] está obsoleto. Use a URL (controller/metodo) e defina GOJIRA_DISABLE_POST_DISPATCH para desligá-lo.', E_USER_DEPRECATED );
+            }
+
+            return array( $post['class'], ( isset( $post['proc'] ) ? $post['proc'] : '' ) );
+         }
+
+
          //Verifica se um controller existe
          static function Exists( $class ){
             
