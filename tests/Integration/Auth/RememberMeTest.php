@@ -198,6 +198,40 @@ final class RememberMeTest extends IntegrationTestCase
         self::assertTrue($this->auth->isLogged('ADM'), 'a sessão aberta pelo remember-me é a mesma do Login');
     }
 
+    /**
+     * Remember-me completo com o modo estrito ligado pela constante: login com
+     * remember, visita nova pelo cookie, rotação, isLogged e logout.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testRememberMeFlowWorksWithStrictConstant(): void
+    {
+        define('GOJIRA_MODEL_STRICT', true);
+        self::assertTrue(\Connection::isStrict());
+
+        $first = $this->guard();
+        $first->attempt('ana', 'segredo', [], true);
+        self::assertTrue($first->check());
+        self::assertTrue((bool) $this->auth->isLogged('ADM'));
+
+        $value    = $first->lastCookie()['value'];
+        $_SESSION = [];
+        $_COOKIE  = [];
+        self::assertFalse((bool) $this->auth->isLogged('ADM'));
+
+        $guard = $this->guard();
+        $user  = $guard->loginByRemember($value);
+        self::assertNotNull($user);
+        self::assertEquals($this->ids['ana'], $user->getAuthId());
+        self::assertTrue((bool) $this->auth->isLogged('ADM'));
+        self::assertNotSame($value, $guard->lastCookie()['value'], 'o token roda');
+
+        $guard->logout();
+        self::assertSame([], $this->tokens());
+        self::assertNull($this->guard()->loginByRemember($value), 'o token antigo não volta');
+    }
+
     public function testEachUseRotatesTheToken(): void
     {
         $value = $this->rememberedVisit();

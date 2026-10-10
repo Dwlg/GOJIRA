@@ -91,16 +91,44 @@ final class LoginTest extends IntegrationTestCase
         self::assertEquals($this->codes['ana'], $_SESSION['ADMCod']);
     }
 
-    public function testLoginAndIsLoggedWorkInStrictMode(): void
+    /**
+     * Login completo e isLogged com o modo estrito ligado pela constante, em processo
+     * separado (a constante não pode ser desfeita). Modos sessão e cookie.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testLoginAndIsLoggedWorkWithStrictConstant(): void
     {
-        // As condições que o Login monta para exist() vão como Gojira_Raw.
-        \Connection::setStrict(true);
+        define('GOJIRA_MODEL_STRICT', true);
+        self::assertTrue(\Connection::isStrict());
+
+        // Sessão: o isLogged passa a condição que monta para exist() como Gojira_Raw.
+        self::assertEquals($this->codes['ana'], $this->login->login('ana', 'segredo', 'admin'));
+        self::assertEquals(1, $this->login->isLogged('admin'));
+        self::assertEquals($this->codes['ana'], $this->login->login('ana@example.test', 'segredo', 'admin'));
+        self::assertFalse((bool) $this->login->isLogged('client'));
+
+        $_SESSION = [];
+        self::assertFalse((bool) $this->login->isLogged('admin'));
+        $this->expectFailedLogin('ana', 'errada');
+        $this->expectFailedLogin('ninguem', 'segredo');
+
+        // Cookie: a verificação do usuário ativo usa runGet.
+        $this->login->setCookie(true);
+        $this->setLoginCookies($this->codes['ana']);
+        self::assertTrue((bool) $this->login->isLogged('ADM'));
+        $this->setLoginCookies($this->codes['bia']);
+        self::assertFalse((bool) $this->login->isLogged('ADM'), 'usuário inativo');
+    }
+
+    private function expectFailedLogin(string $login, string $password): void
+    {
         try {
-            self::assertEquals($this->codes['ana'], $this->login->login('ana', 'segredo', 'admin'));
-            self::assertEquals(1, $this->login->isLogged('admin'));
-            self::assertEquals($this->codes['ana'], $this->login->login('ana@example.test', 'segredo', 'admin'));
-        } finally {
-            \Connection::setStrict(null);
+            $this->login->login($login, $password, 'admin');
+            self::fail('login deveria falhar');
+        } catch (\Exception $e) {
+            self::assertNotInstanceOf(\ModelException::class, $e, 'nada do estrito no caminho do login');
         }
     }
 
