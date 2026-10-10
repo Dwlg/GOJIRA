@@ -19,11 +19,15 @@ define( 'DB_CONNECTION_INVALID_QUERY', 'Objeto de consulta inválido');
 define( 'DB_CONNECTION_INVALID_TABLE', 'Nome da tabela inválido');
 define( 'DB_CONNECTION_INVALID_PARAMETER', 'Parametos inválidos para função %s');
 
+//Código das falhas de run/runAll/runGet
+define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
+
 
       class Connection extends GojiraCore{
     
          protected static $connection;    //Objeto de conexão
          protected static $lastCommand;   //Ultimo comando executado
+         protected static $affectedRows = 0; //Linhas afetadas pelo último run/runAll/runGet
          
          protected static $database;		//Base de dados em que está conectado
          protected static $dbHost;			//Host atual conectado
@@ -199,60 +203,102 @@ define( 'DB_CONNECTION_INVALID_PARAMETER', 'Parametos inválidos para função %
          }
 
 
-         //Prepara um statement e vincula os parâmetros (bind). Uso interno.
+         //Prepara, vincula (bind) e executa um statement. Uso interno de run/runAll/runGet.
          //Os tipos são inferidos: int -> i, float -> d, demais -> s.
-         private function prepareBind( $sql, array $params ){
+         //Qualquer falha vira ConnectionException com mensagem genérica, igual em todas as
+         //versões do PHP (no 8.0 o mysqli devolve false; no 8.1+ lança mysqli_sql_exception).
+         //O detalhe (SQL com placeholders e erro do servidor) vai só para o error_log;
+         //os valores dos parâmetros nunca são registrados.
+         private function executeBound( $method, $sql, array $params ){
 
             $this->checkConnection();
-            self::$lastCommand = $sql;
+            self::$lastCommand  = $sql;
+            self::$affectedRows = 0;
 
-            $stmt = self::$connection->prepare( $sql );
-            if( $stmt === false ){
-               throw( new Exception( DB_CONNECTION_INVALID_SQL ) );
-            }
+            $stmt = false;
+            try {
 
-            if( !empty( $params ) ){
-               $types = '';
-               foreach( $params as $p ){
-                  if( is_int( $p ) )        $types .= 'i';
-                  elseif( is_float( $p ) )  $types .= 'd';
-                  else                      $types .= 's';
+               $stmt = self::$connection->prepare( $sql );
+               if( $stmt === false ){
+                  $this->failBound( $method, $sql, self::$connection->errno, self::$connection->error );
                }
 
-               //bind_param exige referências
-               $bind = [ $types ];
-               foreach( $params as $k => $v ) $bind[] = &$params[ $k ];
-               call_user_func_array( [ $stmt, 'bind_param' ], $bind );
-            }
+               if( !empty( $params ) ){
+                  $types = '';
+                  foreach( $params as $p ){
+                     if( is_int( $p ) )        $types .= 'i';
+                     elseif( is_float( $p ) )  $types .= 'd';
+                     else                      $types .= 's';
+                  }
 
-            return $stmt;
+                  if( strlen( $types ) !== $stmt->param_count ){
+                     $this->failBound( $method, $sql, 0, 'esperados ' . $stmt->param_count . ' parâmetros, recebidos ' . strlen( $types ) );
+                  }
+
+                  //bind_param exige referências
+                  $params = array_values( $params );
+                  $bind   = [ $types ];
+                  foreach( $params as $k => $v ) $bind[] = &$params[ $k ];
+                  if( call_user_func_array( [ $stmt, 'bind_param' ], $bind ) === false ){
+                     $this->failBound( $method, $sql, $stmt->errno, $stmt->error );
+                  }
+               } elseif( $stmt->param_count > 0 ){
+                  $this->failBound( $method, $sql, 0, 'esperados ' . $stmt->param_count . ' parâmetros, recebidos 0' );
+               }
+
+               if( ! $stmt->execute() ){
+                  $this->failBound( $method, $sql, $stmt->errno, $stmt->error );
+               }
+
+               self::$affectedRows = $stmt->affected_rows;
+
+               return $stmt;
+
+            } catch( mysqli_sql_exception $e ){
+               if( $stmt instanceof mysqli_stmt ) $stmt->close();
+               $this->failBound( $method, $sql, $e->getCode(), $e->getMessage() );
+            } catch( ConnectionException $e ){
+               if( $stmt instanceof mysqli_stmt ) $stmt->close();
+               throw $e;
+            }
+         }
+
+
+         //Registra o detalhe da falha no error_log e lança a exceção genérica.
+         private function failBound( $method, $sql, $errno, $error ){
+
+            error_log( sprintf( '[GOJIRA] Connection::%s falhou (%s): %s | SQL: %s',
+                                $method, $errno, $error, $sql ) );
+
+            throw( new ConnectionException( DB_CONNECTION_INVALID_SQL, DB_CONNECTION_ERR_BOUND ) );
          }
 
 
          //Executa um comando (INSERT/UPDATE/DELETE) com parâmetros vinculados.
-         //Retorna true/false. Nenhum valor é concatenado no SQL.
+         //Retorna true em caso de sucesso; falha lança ConnectionException.
+         //O número de linhas afetadas fica em affectedRows().
+         //Nenhum valor é concatenado no SQL.
          function run( $sql, array $params = [] ){
 
-            $stmt = $this->prepareBind( $sql, $params );
-            $ok   = $stmt->execute();
+            $stmt = $this->executeBound( 'run', $sql, $params );
             $stmt->close();
 
-            return $ok;
+            return true;
          }
 
 
          //Executa um SELECT com parâmetros vinculados e retorna TODAS as linhas.
          function runAll( $sql, array $params = [], $type = MYSQLI_ASSOC ){
 
-            $stmt = $this->prepareBind( $sql, $params );
+            $stmt = $this->executeBound( 'runAll', $sql, $params );
 
-            if( ! $stmt->execute() ){
+            try {
+               $res  = $stmt->get_result();
+               $rows = ( $res ? $res->fetch_all( $type ) : [] );
+            } catch( mysqli_sql_exception $e ){
                $stmt->close();
-               throw( new Exception( DB_CONNECTION_INVALID_SQL ) );
+               $this->failBound( 'runAll', $sql, $e->getCode(), $e->getMessage() );
             }
-
-            $res  = $stmt->get_result();
-            $rows = ( $res ? $res->fetch_all( $type ) : [] );
             $stmt->close();
 
             return $rows;
@@ -264,6 +310,12 @@ define( 'DB_CONNECTION_INVALID_PARAMETER', 'Parametos inválidos para função %
 
             $rows = $this->runAll( $sql, $params, $type );
             return isset( $rows[0] ) ? $rows[0] : null;
+         }
+
+
+         //Linhas afetadas pelo último run/runAll/runGet.
+         function affectedRows(){
+            return self::$affectedRows;
          }
 
 
@@ -502,6 +554,15 @@ define( 'DB_CONNECTION_INVALID_PARAMETER', 'Parametos inválidos para função %
                self::$connection->rollback();
             }
          }
-      } 
-   
-   
+      }
+
+
+      //Falha de banco nas consultas parametrizadas (run/runAll/runGet).
+      //A mensagem é sempre genérica; o detalhe fica no error_log.
+      class ConnectionException extends Exception{
+
+         function __construct( $message, $err_cod = 0 ){
+            parent::__construct( $message, $err_cod );
+         }
+
+      }
