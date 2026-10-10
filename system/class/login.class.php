@@ -38,6 +38,7 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
    require_once( __DIR__ . '/auth/tableremembertokenstore.class.php' );
    require_once( __DIR__ . '/auth/requestscheme.class.php' );
    require_once( __DIR__ . '/auth/sessionguard.class.php' );
+   require_once( __DIR__ . '/session.class.php' );
 
 //TODO - Permitir USAR ou NÃO USAR USER_TYPE
 //TODO - Permitir configurar a tabela para o USER_TYPE
@@ -78,7 +79,8 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 			/***   Construtores ***/
 			function __construct(){
 				
-				@session_start();
+				//Com GOJIRA_NO_SESSION_AUTOSTART não abre a sessão aqui (ver Gojira_Session).
+				Gojira_Session::autostart();
 				
 				$a = func_get_args();
 				$i = func_num_args();
@@ -431,6 +433,7 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 
                //Previne session fixation: troca o id da sessão ao autenticar, mantendo
                //os dados. Ver docs/migration/auth-redesign-migration-guide.md.
+               Gojira_Session::ensureStarted();   //sessão sob demanda (GOJIRA_NO_SESSION_AUTOSTART)
                $this->regenerateSession();
 
                $_SESSION[ $row['type'] . "Logged"]  = true;
@@ -547,6 +550,8 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 			//Retorna um campo especifico, independente de quem estiver logado
 			function getLogged( $field, $type = ''){
 				
+				if( !$this->useCookie ) Gojira_Session::resumeIfPresent();
+
 				if( empty( $type ) ){
 					
 					$query = $this->connection->query( 'SELECT shortcode from ' . $this->typeTable );
@@ -584,6 +589,7 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 		   function isLogged( $type ){
             
             if( !$this->configured ) $this->configure( $this->userTable, $this->typeTable);
+            if( !$this->useCookie ) Gojira_Session::resumeIfPresent();
             
 				$type = $this->getType( $type, true );
 				$type = explode( ',', strtoupper( $type ) );

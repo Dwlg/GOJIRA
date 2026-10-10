@@ -1,6 +1,9 @@
 <?php
 
-      @session_start();
+      //Sessão: automática por padrão; sob demanda com GOJIRA_NO_SESSION_AUTOSTART
+      //(ver system/class/session.class.php).
+      require_once( __DIR__ . '/class/session.class.php' );
+      Gojira_Session::autostart();
 
       define('GOJIRA_VERSION', '1.0.2');
 
