@@ -776,7 +776,9 @@ abstract class Model extends Connection{
 			} elseif( is_bool( $value ) ){
 				$ret = (int)$value;
 			} else {
-				throw( new ModelException( 'Field <strong>' . $format->name . '</strong> expects a number', 0x2017 ) );
+				//Valor não numérico (ex.: "10,5"): vai como texto escapado e o banco converte, como antes
+				self::deprecated( 'non-numeric', 'Model: non-numeric value for a numeric field is deprecated' );
+				$ret = '"' . $this->escape( $value ) . '"';
 			}
 			
 		} elseif( $format->field_type == 'enum' ){

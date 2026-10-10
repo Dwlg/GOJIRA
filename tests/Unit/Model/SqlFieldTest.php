@@ -132,23 +132,36 @@ final class SqlFieldTest extends ModelTestCase
     }
 
     /** @dataProvider nonNumericValues */
-    public function testNonNumericValueInNumericColumnThrows(string $type, $value): void
+    public function testNonNumericValueInNumericColumnIsQuotedEscapedAndDeprecated(string $type, string $value, string $expected): void
     {
-        // Antes o valor entrava no SQL sem aspas e sem validação.
-        $this->expectException(\ModelException::class);
-        $this->expectExceptionCode(0x2017);
+        // Antes o valor entrava no SQL sem aspas e sem escape. Agora vai como
+        // texto escapado e o banco faz a conversão.
+        [$sql, $deprecations] = $this->withDeprecations(function () use ($type, $value) {
+            return $this->sql($type, $value);
+        });
 
-        $this->sql($type, $value);
+        self::assertSame($expected, $sql);
+        self::assertCount(1, $deprecations);
+        self::assertStringContainsString('non-numeric value', $deprecations[0]);
     }
 
     public function nonNumericValues(): array
     {
         return [
-            'texto'           => ['int', 'abc'],
-            'número e texto'  => ['int', '1 OR 1'],
-            'aspas'           => ['decimal', '1"'],
-            'array'           => ['int', [1]],
+            'vírgula decimal' => ['decimal', '10,5', '"10,5"'],
+            'moeda'           => ['decimal', 'R$ 10', '"R$ 10"'],
+            'texto'           => ['int', 'abc', '"abc"'],
+            'número e texto'  => ['int', '1 OR 1', '"1 OR 1"'],
+            'aspas'           => ['decimal', '1"', '"1\\""'],
         ];
+    }
+
+    public function testNonScalarValueThrows(): void
+    {
+        $this->expectException(\ModelException::class);
+        $this->expectExceptionCode(0x2017);
+
+        $this->sql('int', [1]);
     }
 
     public function testEmptyIntegerBecomesNullOrZero(): void

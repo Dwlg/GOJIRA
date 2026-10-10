@@ -87,13 +87,19 @@ final class SaveRowTest extends ModelTestCase
         );
     }
 
-    public function testNonNumericValueInIntegerColumnThrows(): void
+    public function testNonNumericValueInIntegerColumnIsQuotedAndDeprecated(): void
     {
-        // Antes o antiInjection transformava '1--2' em 12 e gravava.
-        $this->expectException(\ModelException::class);
-        $this->expectExceptionCode(0x2017);
+        // Antes o antiInjection transformava '1--2' em 12. Agora o valor vai
+        // como texto escapado, com aviso de deprecation.
+        [$sql, $deprecations] = $this->withDeprecations(function () {
+            return $this->model()->saveRow(['name' => 'x', 'status' => '1--2'], true);
+        });
 
-        $this->model()->saveRow(['name' => 'x', 'status' => '1--2'], true);
+        self::assertSame(
+            'INSERT INTO `recording`(`name`, `status`, `created`, `birth`) VALUES("x", "1--2", NULL, NULL)',
+            $sql
+        );
+        self::assertCount(1, $deprecations);
     }
 
     public function testIsoDatesAreWrittenAsGiven(): void

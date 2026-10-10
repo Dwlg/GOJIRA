@@ -124,17 +124,27 @@ final class ModelEscapeTest extends IntegrationTestCase
         }
     }
 
-    public function testNonNumericIntegerIsRejectedBeforeReachingTheDatabase(): void
+    public function testNonNumericIntegerIsSentAsTextAndConvertedByTheDatabase(): void
     {
+        // Sem modo estrito do SQL o banco converte o texto (ex.: "10,5" -> 10),
+        // e o valor nunca sai do literal.
         $model = $this->codeModel();
+        $mode  = self::$connection->fetch(self::$connection->query('SELECT @@SESSION.sql_mode AS m'))['m'];
+        self::$connection->execute("SET SESSION sql_mode = ''");
 
         try {
-            $model->saveRow(['code' => 'a', 'name' => 'a', 'qty' => '1 OR 1']);
-            self::fail('valor não numérico deveria lançar ModelException');
-        } catch (\ModelException $e) {
-            self::assertSame(0x2017, $e->getCode());
+            [, $deprecations] = $this->withDeprecations(function () use ($model) {
+                $model->saveRow(['code' => 'a', 'name' => 'a', 'qty' => '10,5']);
+                $model->saveRow(['code' => 'b', 'name' => 'b', 'qty' => '7" OR "1"="1']);
+            });
+        } finally {
+            self::$connection->execute("SET SESSION sql_mode = '" . self::$connection->escape($mode) . "'");
         }
-        self::assertEquals(0, $model->countData());
+
+        self::assertCount(1, $deprecations);
+        self::assertEquals(10, $model->getData(['code' => 'a'])[0]->qty);
+        self::assertEquals(7, $model->getData(['code' => 'b'])[0]->qty);
+        self::assertEquals(2, $model->countData());
     }
 
     public function testInvalidLimitIsRejected(): void
