@@ -18,6 +18,7 @@ define( 'DB_CONNECTION_INVALID_SQL', 'Comando sql inválido fornecido para consu
 define( 'DB_CONNECTION_INVALID_QUERY', 'Objeto de consulta inválido');
 define( 'DB_CONNECTION_INVALID_TABLE', 'Nome da tabela inválido');
 define( 'DB_CONNECTION_INVALID_PARAMETER', 'Parametos inválidos para função %s');
+define( 'DB_CONNECTION_INVALID_CHARSET', "Charset '%s' não aceito pelo servidor: %s");
 
 
       class Connection extends GojiraCore{
@@ -29,6 +30,12 @@ define( 'DB_CONNECTION_INVALID_PARAMETER', 'Parametos inválidos para função %
          protected static $dbHost;			//Host atual conectado
 			protected static $dbUser;			//Usuário que foi usado para conectar
 			protected static $dbPassword;		//Senha para a base de dados
+
+         //Charset e locale aplicados a cada conexão. Os padrões mantêm o comportamento da 1.0.
+         const DEFAULT_CHARSET       = 'utf8';
+         const DEFAULT_LC_TIME_NAMES = 'pt_BR';
+         protected static $charset     = self::DEFAULT_CHARSET;
+         protected static $lcTimeNames = self::DEFAULT_LC_TIME_NAMES;
 
 
          //Se o PHP sofre um erro e por algum motivo fecha durante uma transação
@@ -72,6 +79,75 @@ define( 'DB_CONNECTION_INVALID_PARAMETER', 'Parametos inválidos para função %
         
         
         
+         /***   Charset e locale da conexão ***/
+
+         //Define o charset das próximas conexões (ex.: 'utf8mb4'). Vazio volta ao padrão 'utf8'.
+         //Se já houver conexão aberta, aplica nela também.
+         static function setCharset( $charset ){
+
+            $charset = ( $charset === null || $charset === '' ) ? self::DEFAULT_CHARSET : (string)$charset;
+
+            if( ! preg_match( '/\A[A-Za-z0-9_]{1,32}\z/', $charset ) ){
+               throw( new InvalidArgumentException( sprintf( DB_CONNECTION_INVALID_PARAMETER, __METHOD__ ) ) );
+            }
+
+            if( self::openConnection() && ( $error = self::applyCharset( self::$connection, $charset ) ) !== null ){
+               throw( new Exception( sprintf( DB_CONNECTION_INVALID_CHARSET, $charset, $error ) ) );
+            }
+
+            self::$charset = $charset;
+         }
+
+         static function getCharset(){ return self::$charset; }
+
+
+         //Define o lc_time_names das próximas conexões (ex.: 'en_US'). Vazio volta ao padrão 'pt_BR'.
+         //Se já houver conexão aberta, aplica nela também.
+         static function setLcTimeNames( $name ){
+
+            $name = ( $name === null || $name === '' ) ? self::DEFAULT_LC_TIME_NAMES : (string)$name;
+
+            if( ! preg_match( '/\A[a-z]{2,3}_[A-Z]{2}\z/', $name ) ){
+               throw( new InvalidArgumentException( sprintf( DB_CONNECTION_INVALID_PARAMETER, __METHOD__ ) ) );
+            }
+
+            if( self::openConnection() && ! self::$connection->query( "SET lc_time_names='" . $name . "'" ) ){
+               throw( new Exception( sprintf( DB_CONNECTION_INVALID_PARAMETER, __METHOD__ ) ) );
+            }
+
+            self::$lcTimeNames = $name;
+         }
+
+         static function getLcTimeNames(){ return self::$lcTimeNames; }
+
+
+         //Aplica o charset com mysqli::set_charset. Devolve null ou a mensagem de erro
+         //(com ou sem o modo de exceções do mysqli ligado).
+         private static function applyCharset( mysqli $connection, $charset ){
+
+            try{
+               return $connection->set_charset( $charset ) ? null : $connection->error;
+            } catch( mysqli_sql_exception $e ){
+               return $e->getMessage();
+            }
+         }
+
+
+         //Indica se há uma conexão aberta para aplicar a mudança na hora.
+         //Sem ela, o valor só vale a partir do próximo connect().
+         private static function openConnection(){
+
+            if( ! is_object( self::$connection ) ) return false;
+
+            try{
+               return self::$connection->thread_id > 0;   //lança Error se o mysqli já foi fechado
+            } catch( Error $e ){
+               return false;   //mysqli já fechado
+            }
+         }
+
+
+
          /***   Metodos do Objeto ***/
          function configure($dbHost, $dbUser, $dbPass, $dbName = ''){
 
@@ -100,13 +176,17 @@ define( 'DB_CONNECTION_INVALID_PARAMETER', 'Parametos inválidos para função %
                exit();
             }
             
+            //set_charset (e não SET NAMES) para o real_escape_string conhecer o charset da conexão.
+            //Ajusta character_set_client, character_set_connection e character_set_results.
+            $error = self::applyCharset( $connection, self::$charset );
+            if( $error !== null ){
+               $connection->close();
+               throw(new Exception( sprintf(DB_CONNECTION_INVALID_CHARSET, self::$charset, $error) ) );
+            }
+
             self::$connection = $connection;
-            
-            $this->execute("SET NAMES 'utf8'");
-            $this->execute('SET character_set_connection=utf8');
-            $this->execute('SET character_set_client=utf8');
-            $this->execute('SET character_set_results=utf8');
-            $this->execute('SET lc_time_names=pt_BR');
+
+            $this->execute("SET lc_time_names='" . self::$lcTimeNames . "'");
 
             return $this;
          }
