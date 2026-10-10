@@ -474,7 +474,7 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 					if( $useSmall ){
 						$ret = $type;
 					} else {
-						$ret = '("' . $type . '")';
+						$ret = '("' . $this->connection->escape( $type ) . '")';
 					}
 				}
 				

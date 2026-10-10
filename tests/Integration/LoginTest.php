@@ -234,4 +234,24 @@ final class LoginTest extends IntegrationTestCase
 
         self::assertFalse($this->login->isLogged('ADM'));
     }
+
+    private function loginWithoutTypeTable(): \Login
+    {
+        return new \Login(self::$connection, self::$globals->tools, $this->userTable, 'gj_test_missing_type_table');
+    }
+
+    public function testGetTypeEscapesValueWithoutTypeTable(): void
+    {
+        $login = $this->loginWithoutTypeTable();
+
+        self::assertSame('("1")', $login->getType('1'));
+        self::assertSame('("1\\"")', $login->getType('1"'));
+        self::assertSame('1"', $login->getType('1"', true));
+    }
+
+    public function testLoginWithoutTypeTableTreatsQuotedTypeAsValue(): void
+    {
+        $this->expectExceptionCode(0x9001);
+        $this->loginWithoutTypeTable()->login('ana', 'segredo', 'adm"');
+    }
 }
