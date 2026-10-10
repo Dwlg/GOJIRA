@@ -3,9 +3,9 @@
 define('SYSDIR_NAME', '../system/');
 require_once('constants.php');
 
-   //A sessão é aberta pelo framework (system/init.php). Com GOJIRA_NO_SESSION_AUTOSTART
-   //ela fica sob demanda; ver system/class/session.class.php.
-   if( !( defined('GOJIRA_NO_SESSION_AUTOSTART') && GOJIRA_NO_SESSION_AUTOSTART ) ) @session_start();
+   //A sessão é aberta pelo framework, no system/init.php (Gojira_Session::autostart),
+   //para que GOJIRA_SESSION_HARDENING e GOJIRA_NO_SESSION_AUTOSTART valham aqui.
+   //Abrir a sessão antes do init.php impediria o framework de configurar o cookie.
 
    setlocale(LC_MONETARY, 'pt_BR');
    date_default_timezone_set('America/Sao_Paulo');

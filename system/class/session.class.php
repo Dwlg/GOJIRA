@@ -20,6 +20,11 @@
      confiável em GOJIRA_TRUSTED_PROXIES ou GOJIRA_FORCE_SECURE_COOKIES);
    - session.use_strict_mode=1 e session.use_only_cookies=1: um id de sessão
      que o servidor não emitiu é recusado e trocado por um novo.
+
+   Atenção: uma sessão aberta pelo projeto antes do system/init.php (por
+   exemplo um session_start() no configs.php) já está ativa quando o framework
+   chega aqui, e então nenhuma das opções acima vale. Deixe a abertura para o
+   framework, como faz o project_demo.
 */
 
    require_once( __DIR__ . '/auth/requestscheme.class.php' );
