@@ -4,7 +4,8 @@
    "homepage": "https://github.com/soares289/GOJIRA",
    "license": "OSL-3.0",
    "keywords": ["GOJIRA", "MVC", "Framework","PHP","MySQL"],
-   "minimum-stability": "dev",
+   "minimum-stability": "stable",
+   "prefer-stable": true,
    "authors": [
       {
          "name": "Carlsom Albert Soares",
@@ -12,10 +13,19 @@
       }
    ],
    "config": {
-      "vendor-dir": "system/vendor"
+      "vendor-dir": "system/vendor",
+      "platform": {
+         "php": "8.0.2"
+      }
    },
    "require": {
       "php": ">=8.0.0",
-      "smarty/smarty": "^5.6"
+      "phpmailer/phpmailer": "^6.9",
+      "smarty/smarty": "^5.8.4"
+   },
+   "scripts": {
+      "post-install-cmd": "@remove-oauth-sample",
+      "post-update-cmd": "@remove-oauth-sample",
+      "remove-oauth-sample": "@php -r \"@unlink('system/vendor/phpmailer/phpmailer/get_oauth_token.php');\""
    }
 }

@@ -1,2 +1,5 @@
 dist/
 dist/*
+
+# Script de exemplo do PHPMailer; removido pelo composer (scripts) e fora do repositório
+system/vendor/phpmailer/phpmailer/get_oauth_token.php
