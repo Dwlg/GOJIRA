@@ -87,20 +87,26 @@
       
             $ret = '';
             
+            //Valores que vão para atributos saem escapados (valor simples sai igual)
+            require_once( __DIR__ . '/html.class.php' );
+            $attrId = Tool_Html::escapeAttr( $id );
+            $width  = Tool_Html::escapeAttr( $width );
+            $height = Tool_Html::escapeAttr( $height );
+
 		      if( strtolower( $type ) == "youtube" ){
 					
 					if( $url ){
-						$ret = 'https://www.youtube.com/embed/' . $id . '?rel=0&wmode=transparent&autoplay=' . ($autoplay ? 1 : 0);
+						$ret = 'https://www.youtube.com/embed/' . Tool_Html::escapeUrl( $id ) . '?rel=0&wmode=transparent&autoplay=' . ($autoplay ? 1 : 0);
 					} else {
-						$ret = '<iframe src="https://www.youtube.com/embed/' . $id . '?rel=0&wmode=transparent&autoplay=' . ($autoplay ? 1 : 0) . '" width="' . $width . '" height="' . $height . '" frameborder="0" allowfullscreen></iframe>';
+						$ret = '<iframe src="https://www.youtube.com/embed/' . $attrId . '?rel=0&wmode=transparent&autoplay=' . ($autoplay ? 1 : 0) . '" width="' . $width . '" height="' . $height . '" frameborder="0" allowfullscreen></iframe>';
 					}
 				
 				} elseif( strtolower( $type ) == "vimeo" ){
 					
 					if( $url ){
-						$ret = 'https://player.vimeo.com/video/' . $id . '?title=0&amp;byline=0&amp;portrait=0&autoplay=' . ($autoplay ? 1 : 0);
+						$ret = 'https://player.vimeo.com/video/' . Tool_Html::escapeUrl( $id ) . '?title=0&amp;byline=0&amp;portrait=0&autoplay=' . ($autoplay ? 1 : 0);
 					} else {
-						$ret = '<iframe src="https://player.vimeo.com/video/' . $id . '?title=0&amp;byline=0&amp;portrait=0&autoplay=' . ($autoplay ? 1 : 0) . '" width="' . $width . '" height="' . $height . '" frameborder="0"></iframe>';
+						$ret = '<iframe src="https://player.vimeo.com/video/' . $attrId . '?title=0&amp;byline=0&amp;portrait=0&autoplay=' . ($autoplay ? 1 : 0) . '" width="' . $width . '" height="' . $height . '" frameborder="0"></iframe>';
 					}
 				}
 				
@@ -163,6 +169,11 @@
 			
 			//retorna o codigode para embedar um arquivo do issu a partir de um codigo recebido
 			function issu_get_embed( $id, $width, $height ){
+				
+				require_once( __DIR__ . '/html.class.php' );
+				$id     = Tool_Html::escapeAttr( $id );
+				$width  = Tool_Html::escapeAttr( $width );
+				$height = Tool_Html::escapeAttr( $height );
 				
 				$ret = '<object classid="clsid:D27CDB6E-AE6D-11cf-96B8-444553540000" style="width: ' . $width . 'px;height: ' . $height . 'px" id="928ddaf9-16fe-a102-ceca-8610fbe6249f" >' .
 			        			'<param name="movie" value="https://static.issuu.com/webembed/viewers/style1/v2/IssuuReader.swf?mode=mini&amp;backgroundColor=%23222222&amp;documentId=' . $id . '" />' .
