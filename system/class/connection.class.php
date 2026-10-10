@@ -210,7 +210,10 @@ define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
 
 
          //Liga (true), desliga (false) ou volta a seguir a constante GOJIRA_MODEL_STRICT (null).
+         //A chave é global: vale para todos os Models e Connections até o fim da requisição.
          //No modo estrito, SQL cru do chamador só entra por Gojira_Raw / Connection::raw().
+         //Não cobre query(), execute(), secureExec(), run*(), count($sql), max()/min() nem
+         //o SQL que uma subclasse monta por conta própria: esses recebem SQL por contrato.
          static function setStrict( $on ){
             self::$strict = ( $on === null ? null : (bool)$on );
          }
@@ -226,8 +229,9 @@ define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
          }
 
 
-         //Troca cada ? fora de aspas e crases por um literal escapado de $params (na ordem).
-         //Placeholder sem valor, valor sobrando ou aspas abertas lançam ModelException 0x201B.
+         //Troca cada ? fora de aspas, crases e comentários (/* */, "-- " e #) por um literal
+         //escapado de $params (na ordem). O ? de dentro de comentário fica como está.
+         //Placeholder sem valor, valor sobrando, aspas ou comentário abertos lançam ModelException 0x201B.
          function bindSql( $sql, array $params = [] ){
 
             $sql    = (string)$sql;
@@ -251,6 +255,21 @@ define( 'DB_CONNECTION_ERR_BOUND', 0x4001 );
                } elseif( $c === "'" || $c === '"' || $c === '`' ){
                   $quote = $c;
                   $out  .= $c;
+
+               } elseif( $c === '/' && $i + 1 < $len && $sql[ $i + 1 ] === '*' ){
+                  $end = strpos( $sql, '*/', $i + 2 );
+                  if( $end === false ){
+                     throw( new ModelException( 'Unterminated comment in SQL fragment', 0x201B ) );
+                  }
+                  $out .= substr( $sql, $i, $end + 2 - $i );
+                  $i    = $end + 1;
+
+               } elseif( $c === '#' || ( $c === '-' && substr( $sql, $i + 1, 1 ) === '-' && ( $i + 2 >= $len || ord( $sql[ $i + 2 ] ) <= 32 ) ) ){
+                  //Comentário até o fim da linha (no MySQL, "--" só abre comentário seguido de espaço)
+                  $end  = strpos( $sql, "\n", $i );
+                  $end  = ( $end === false ? $len : $end );
+                  $out .= substr( $sql, $i, $end - $i );
+                  $i    = $end - 1;
 
                } elseif( $c === '?' ){
                   if( !array_key_exists( $n, $params ) ){

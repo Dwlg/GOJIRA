@@ -123,6 +123,21 @@ final class ModelStrictTest extends IntegrationTestCase
         self::assertSame([], $model->getCommandData(), 'o valor é comparado como texto');
     }
 
+    public function testValueWithCommentMarkersIsStoredAndMatchedAsData(): void
+    {
+        $model = $this->people();
+        \Model::setStrict(true);
+        $value = "x */ OR 1=1 -- '?";
+
+        $row = $model->saveRow(['name' => \Model::raw('CONCAT(?, ?)', [$value, '#'])  , 'status' => 0]);
+        $model->field('name')->whereRaw('name = ? /* comentário com ? */ AND status = ?', [$value . '#', 0]);
+        $rows = $model->getCommandData(true, true);
+
+        self::assertSame([['name' => $value . '#']], $rows);
+        self::assertSame([$value . '#'], self::$connection->getValue($model->get_table(), 'name', ['id' => $row['id']]));
+        self::assertEquals(4, $model->countData(), 'nenhuma outra linha foi afetada');
+    }
+
     public function testConnectionExistAndGetValueInStrict(): void
     {
         $model = $this->people();

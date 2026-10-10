@@ -417,6 +417,27 @@ final class StrictModeTest extends ModelTestCase
         self::assertSame("a = 'x' AND b = '?' AND c = \"it\\\"s?\" AND `d?` = NULL AND e IN (1, 1.5)", $sql);
     }
 
+    public function testBindSqlLeavesQuestionMarksInCommentsAlone(): void
+    {
+        $sql = $this->model()->bindSql(
+            "a = ? /* b = ? */ AND c = ? -- d = ?\nAND e = ? # f = ?\nAND g = a--?\nAND h = ?",
+            [1, 2, 3, 4, 5]
+        );
+
+        self::assertSame(
+            "a = 1 /* b = ? */ AND c = 2 -- d = ?\nAND e = 3 # f = ?\nAND g = a--4\nAND h = 5",
+            $sql,
+            '"--" sem espaço depois é subtração dupla, não comentário'
+        );
+    }
+
+    public function testBoundValueWithCommentMarkersStaysInsideTheLiteral(): void
+    {
+        $sql = $this->model()->bindSql('a = ? AND b = ? /* ? */', ['x */ OR 1=1 /*', "-- '?"]);
+
+        self::assertSame("a = 'x */ OR 1=1 /*' AND b = '-- \\'?' /* ? */", $sql);
+    }
+
     /** @dataProvider invalidBinds */
     public function testBindSqlRejectsMismatchesAndInvalidValues(string $sql, array $params): void
     {
@@ -432,6 +453,7 @@ final class StrictModeTest extends ModelTestCase
             'faltando valor'  => ['a = ? AND b = ?', [1]],
             'sobrando valor'  => ['a = ?', [1, 2]],
             'aspas abertas'   => ["a = 'x AND b = ?", [1]],
+            'comentário aberto' => ['a = ? /* b = ?', [1, 2]],
             'objeto'          => ['a = ?', [new \stdClass()]],
             'lista vazia'     => ['a IN (?)', [[]]],
             'lista aninhada'  => ['a IN (?)', [[[1]]]],
