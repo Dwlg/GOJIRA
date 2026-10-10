@@ -8,7 +8,7 @@
    helper OPCIONAL para quem não tiver um processo de migração próprio; o
    projeto decide se e quando chamá-lo.
 
-   Ver docs/specs/auth-redesign-spec.md (§3.4, §5, Fase 4).
+   Ver docs/migration/auth-redesign-migration-guide.md.
 */
 
    require_once( __DIR__ . '/remembertokenstore.interface.php' );
@@ -24,7 +24,7 @@
          $this->table      = $table;
       }
 
-      //DDL de referência (ver docs/specs/auth-redesign-spec.md §5).
+      //DDL de referência (ver docs/migration/auth-redesign-migration-guide.md).
       public static function schemaSql( string $table = 'auth_remember_token' ): string {
          return 'CREATE TABLE IF NOT EXISTS `' . $table . '` (' .
                 ' selector CHAR(24) NOT NULL,' .

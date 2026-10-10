@@ -1,7 +1,7 @@
 <?php
 /*
    Gojira_PasswordHasher - Contrato de hashing de senha do GOJIRA.
-   Ver docs/specs/auth-redesign-spec.md (§3.3).
+   Ver docs/migration/auth-redesign-migration-guide.md.
 */
 
    interface Gojira_PasswordHasher {

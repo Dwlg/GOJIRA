@@ -2,7 +2,7 @@
 /*
    Gojira_MapAccessPolicy - Implementação padrão de Gojira_AccessPolicy, lida
    de um mapa declarativo central e/ou de uma propriedade estática por
-   controller - as duas opções descritas em docs/specs/auth-redesign-spec.md (§3.7).
+   controller - as duas opções descritas em docs/migration/auth-redesign-migration-guide.md.
 
    Formato do mapa central (chave = nome do controller, minúsculo):
       [

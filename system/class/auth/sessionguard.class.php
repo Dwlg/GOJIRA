@@ -14,7 +14,7 @@
    caso de validator inválido (possível roubo). Sem store injetado, remember-me
    é inerte (attempt() ignora $remember, loginByRemember() sempre retorna null).
 
-   Ver docs/specs/auth-redesign-spec.md (§3.6, §4.2, Fases 2 e 4).
+   Ver docs/migration/auth-redesign-migration-guide.md.
 */
 
    require_once( __DIR__ . '/guard.interface.php' );

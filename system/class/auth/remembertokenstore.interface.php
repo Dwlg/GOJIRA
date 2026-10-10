@@ -1,7 +1,7 @@
 <?php
 /*
    Gojira_RememberTokenStore - Persistência dos tokens de remember-me.
-   Ver docs/specs/auth-redesign-spec.md (§3.4, Fase 4).
+   Ver docs/migration/auth-redesign-migration-guide.md.
 */
 
    require_once( __DIR__ . '/remembertoken.interface.php' );

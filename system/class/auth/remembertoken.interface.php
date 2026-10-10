@@ -1,7 +1,7 @@
 <?php
 /*
    Gojira_RememberToken - Registro de remember-me (selector/validator).
-   Ver docs/specs/auth-redesign-spec.md (§3.4, Fase 4).
+   Ver docs/migration/auth-redesign-migration-guide.md.
 
    O validator NUNCA é exposto por aqui - só o hash dele (validator_hash).
    O validator em claro existe apenas no cookie do navegador e no instante

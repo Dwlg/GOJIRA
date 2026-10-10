@@ -1,7 +1,7 @@
 <?php
 /*
    Gojira_AccessPolicy - Controle de acesso deny-by-default, com camada de
-   públicos. Ver docs/specs/auth-redesign-spec.md (§3.5, Fase 3).
+   públicos. Ver docs/migration/auth-redesign-migration-guide.md.
 
    Integração em Controller::Call é OPT-IN: só entra em ação quando o projeto
    registra uma policy via Controller::setAccessPolicy(). Sem policy registrada,

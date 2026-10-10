@@ -2,7 +2,7 @@
 /*
    Gojira_LegacyHasher - Esquema de hash antigo do GOJIRA (sha512 + whirlpool, 3 voltas).
    Mantido APENAS para validar senhas legadas e migrá-las para um esquema moderno.
-   Não deve ser usado para gerar hashes novos. Ver docs/specs/auth-redesign-spec.md (§3.3).
+   Não deve ser usado para gerar hashes novos. Ver docs/migration/auth-redesign-migration-guide.md.
 */
 
    require_once( __DIR__ . '/passwordhasher.interface.php' );

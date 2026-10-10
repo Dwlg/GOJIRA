@@ -24,7 +24,8 @@
 
 
          //Tela/endpoint de login comum (usuário + senha).
-         //Ex.: POST authdemo/login/user/admin/pass/minhasenha/remember/1
+         //Ex.: POST authdemo/login com os campos user, pass e remember no corpo.
+         //Não passe a senha na URL: ela fica em logs de servidor e no histórico.
          function login( $param ){
 
             $guard    = $this->globals->login->guard('ADM');
@@ -35,11 +36,14 @@
 
                return [ 'success' => 1, 'msg' => 'Bem-vindo, ' . $user->getAuthLogin() ];
 
-            //Gojira_AuthException carrega um código estável (getAuthCode()), útil
-            //para a UI decidir a mensagem sem fazer parsing de texto.
+            //Gojira_AuthException carrega um código estável (getAuthCode()). Usuário
+            //inexistente e senha errada recebem a mesma mensagem, para não revelar
+            //quais logins existem.
             } catch( Gojira_AuthException $e ){
 
-               return [ 'success' => 0, 'msg' => $e->getMessage(), 'code' => $e->getAuthCode() ];
+               $generic = in_array( $e->getAuthCode(), [ Gojira_AuthException::INVALID_USER, Gojira_AuthException::INVALID_PASSWORD ], true );
+
+               return [ 'success' => 0, 'msg' => $generic ? 'Usuário ou senha inválidos' : $e->getMessage() ];
             }
          }
 

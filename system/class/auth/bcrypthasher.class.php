@@ -3,7 +3,7 @@
    Gojira_BcryptHasher - Hasher moderno padrão do GOJIRA.
    Usa password_hash()/password_verify() (bcrypt por padrão, ou argon2 se configurado).
    Aceita um hasher legado opcional para validar e migrar senhas antigas de forma
-   transparente. Ver docs/specs/auth-redesign-spec.md (§3.3).
+   transparente. Ver docs/migration/auth-redesign-migration-guide.md.
 
    Limite do bcrypt: só os primeiros 72 bytes da senha entram no hash. Duas
    senhas que coincidem nesses 72 bytes (em UTF-8, um caractere acentuado ocupa

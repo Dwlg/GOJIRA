@@ -22,7 +22,7 @@ define( 'LGN_COOKIE_EXPIRE_TIME' , 1800);
 //bcrypt passa a ser o padrão.
 if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 
-   //Hasher de senha + contratos de usuário/guard. Ver docs/specs/auth-redesign-spec.md
+   //Hasher de senha + contratos de usuário/guard. Ver docs/migration/auth-redesign-migration-guide.md
    require_once( __DIR__ . '/auth/passwordhasher.interface.php' );
    require_once( __DIR__ . '/auth/legacyhasher.class.php' );
    require_once( __DIR__ . '/auth/bcrypthasher.class.php' );
@@ -136,13 +136,13 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 			}
 
 			//Permite o projeto trocar como os usuários são localizados, sem tocar no core.
-			//Ver docs/specs/auth-redesign-spec.md (§3.2).
+			//Ver docs/migration/auth-redesign-migration-guide.md.
 			public function setUserProvider( Gojira_UserProvider $provider ){
 				$this->userProviderObj    = $provider;
 				$this->userProviderCustom = true;
 			}
 
-			//Fachada simplificada para um papel/silo de sessão. Ver docs/specs/auth-redesign-spec.md (§3.6).
+			//Fachada simplificada para um papel/silo de sessão. Ver docs/migration/auth-redesign-migration-guide.md.
 			//$rememberStore é opcional (Fase 4 - remember-me); sem ele, Guard::attempt()
 			//com $remember=true vira no-op e loginByRemember() sempre retorna null.
 			public function guard( string $sessionType, $rememberStore = null, string $rememberCookie = '', int $rememberTtl = 2592000 ): Gojira_Guard {
@@ -220,7 +220,7 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 			//remember-me verificado pelo Gojira_SessionGuard). Não verifica senha - quem
 			//chama é responsável por já ter validado a identidade. Ainda assim, confirma
 			//isActive() (uma conta desativada depois do cookie ter sido emitido não deve
-			//conseguir abrir sessão). Ver docs/specs/auth-redesign-spec.md (Fase 4).
+			//conseguir abrir sessão). Ver docs/migration/auth-redesign-migration-guide.md.
 			public function loginAs( Gojira_Authenticatable $user ){
 
 				if( ! $user->isActive() ){
@@ -251,13 +251,13 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
 
 
 			//Detecta HTTPS, para não marcar cookies como Secure numa conexão HTTP (o
-			//navegador simplesmente descartaria o cookie). Ver docs/specs/auth-redesign-spec.md (§8).
+			//navegador simplesmente descartaria o cookie). Ver docs/migration/auth-redesign-migration-guide.md.
 			private function isHttps(): bool {
 				return isset( $_SERVER['HTTPS'] ) && $_SERVER['HTTPS'] !== '' && strtolower( (string)$_SERVER['HTTPS'] ) !== 'off';
 			}
 
-			//Grava um cookie de identidade com as flags de hardening recomendadas pela
-			//spec (§8): HttpOnly (JS não lê), Secure quando HTTPS, SameSite=Lax.
+			//Grava um cookie de identidade com HttpOnly (JS não lê), Secure quando
+			//HTTPS e SameSite=Lax.
 			private function setIdentityCookie( string $name, $value, int $expires ){
 				$this->sendCookie( $name, (string)$value, [
 					'expires'  => $expires,
@@ -301,7 +301,7 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
             } else {
 
                //Previne session fixation: troca o id da sessão ao autenticar, mantendo
-               //os dados. Ver docs/specs/auth-redesign-spec.md (§8).
+               //os dados. Ver docs/migration/auth-redesign-migration-guide.md.
                $this->regenerateSession();
 
                $_SESSION[ $row['type'] . "Logged"]  = true;
@@ -360,7 +360,7 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
                   }
 					}
 
-					//Previne reuso do id de sessão após logout. Ver docs/specs/auth-redesign-spec.md (§8).
+					//Previne reuso do id de sessão após logout. Ver docs/migration/auth-redesign-migration-guide.md.
 					$this->regenerateSession();
 
 				} else {

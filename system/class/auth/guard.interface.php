@@ -1,6 +1,6 @@
 <?php
 /*
-   Gojira_Guard - Fachada de autenticação. Ver docs/specs/auth-redesign-spec.md (§3.6).
+   Gojira_Guard - Fachada de autenticação. Ver docs/migration/auth-redesign-migration-guide.md.
 
    Cada instância representa UM papel/silo de sessão (ex.: um Guard para 'ADM',
    outro para 'USR'), compatível com o modelo multi-tipo de sessão do GOJIRA

@@ -1,6 +1,6 @@
 <?php
 
-      //Controle de acesso deny-by-default (opt-in). Ver docs/specs/auth-redesign-spec.md (Fase 3).
+      //Controle de acesso deny-by-default (opt-in). Ver docs/migration/auth-redesign-migration-guide.md.
       require_once( __DIR__ . '/auth/accesspolicy.interface.php' );
       require_once( __DIR__ . '/auth/mapaccesspolicy.class.php' );
 
@@ -101,7 +101,7 @@
 
             //Só considera o método se ele existir E for público. method_exists() sozinho
             //enxerga métodos protected/private, permitindo executar via URL lógica que o
-            //controller nunca pretendeu expor (achado F05 da auditoria de segurança).
+            //controller nunca pretendeu expor.
             //Tratamos "existe mas não é público" igual a "não existe" (not_found/0x1011),
             //para não vazar quais métodos protegidos existem.
             $methodPublic = false;

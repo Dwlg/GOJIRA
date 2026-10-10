@@ -12,7 +12,7 @@
    tipo (ex.: 'ADM'), como o Login::getType() já assumia: os tipos pedidos são
    comparados direto com essa coluna e ela também vira o papel do usuário.
 
-   Ver docs/specs/auth-redesign-spec.md (§3.2, Fase 2).
+   Ver docs/migration/auth-redesign-migration-guide.md.
 */
 
    require_once( __DIR__ . '/userprovider.interface.php' );

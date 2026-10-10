@@ -1,7 +1,7 @@
 <?php
 /*
    Gojira_UserProvider - Localiza usuários. NUNCA valida senha - só recupera o
-   Authenticatable. Ver docs/specs/auth-redesign-spec.md (§3.2).
+   Authenticatable. Ver docs/migration/auth-redesign-migration-guide.md.
 
    Implementações DEVEM usar query parametrizada (Connection::run/runAll/runGet),
    nunca concatenar valores recebidos no SQL.
