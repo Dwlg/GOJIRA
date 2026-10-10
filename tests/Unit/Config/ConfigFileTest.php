@@ -80,9 +80,37 @@ final class ConfigFileTest extends TestCase
         fclose($pipes[2]);
         proc_close($proc);
 
-        // save() só escreveu depois que o outro processo liberou a trava,
-        // e o arquivo final é inteiro o do save(), sem mistura.
+        // save() só escreveu depois que o outro processo liberou a trava, releu
+        // o arquivo dentro da trava e manteve o que o outro processo gravou.
         self::assertGreaterThan(0.5, $elapsed);
-        self::assertSame("\n[S]\nK=\"meu\"\n", file_get_contents($file));
+        self::assertSame("\n[OUTRO]\nK=\"v\"\n\n[S]\nK=\"meu\"\n", file_get_contents($file));
+        self::assertSame('v', $cfg->getConfig('OUTRO', 'K'));
+    }
+
+    public function testSaveDoesNotLoseAnotherInstanceUpdate(): void
+    {
+        // Duas requisições carregam o arquivo ao mesmo tempo e gravam chaves diferentes.
+        $a = new \Config($this->dir);
+        $b = new \Config($this->dir);
+
+        $a->setConfig('S', 'A', '1');
+        $b->setConfig('S', 'B', '2');
+        $b->setConfig('T', 'C', '3');
+
+        $fresh = new \Config($this->dir);
+        self::assertSame('1', $fresh->getConfig('S', 'A'));
+        self::assertSame('2', $fresh->getConfig('S', 'B'));
+        self::assertSame('3', $fresh->getConfig('T', 'C'));
+    }
+
+    public function testSameKeyLastWriterWins(): void
+    {
+        $a = new \Config($this->dir);
+        $b = new \Config($this->dir);
+
+        $a->setConfig('S', 'K', 'a');
+        $b->setConfig('S', 'K', 'b');
+
+        self::assertSame('b', (new \Config($this->dir))->getConfig('S', 'K'));
     }
 }
