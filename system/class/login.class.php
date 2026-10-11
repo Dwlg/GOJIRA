@@ -571,7 +571,10 @@ if( !defined( 'LGN_PASSWORD_REHASH' ) ) define( 'LGN_PASSWORD_REHASH', false );
                if( $this->useCookie ){
                   if( isset( $_COOKIE[ $this->cookieName( $a, $field ) ] ) &&
                      !empty( $_COOKIE[ $this->cookieName( $a, $field ) ] ) ){
-                     return $_COOKIE[ $this->cookieName( $a, $field ) ];
+                     //O cookie vem do navegador e não é assinado: o valor sai escapado
+                     //para HTML, para não ir cru para a página.
+                     $value = $_COOKIE[ $this->cookieName( $a, $field ) ];
+                     return is_scalar( $value ) ? htmlspecialchars( (string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8' ) : '';
                   }
                } else {
                   if( isset( $_SESSION[ strtoupper( $a ) . $field ] ) &&

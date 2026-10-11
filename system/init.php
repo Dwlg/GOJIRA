@@ -146,6 +146,7 @@
       if( $globals->smarty !== null ){
       $globals->smarty->setTemplateDir( $globals->environment->viewPath );
       $globals->smarty->caching = \Smarty\Smarty::CACHING_OFF;
+      Engine::configureSmarty( $globals->smarty );   //GOJIRA_ESCAPE_HTML (opt-in)
       }
 
       //Adiciona o controle de helpers (autoload)
