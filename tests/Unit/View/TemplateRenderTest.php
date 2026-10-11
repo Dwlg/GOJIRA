@@ -215,7 +215,11 @@ final class TemplateRenderTest extends TestCase
         $globals->smarty                      = $smarty;
         $GLOBALS['globals'] = $globals;
 
-        self::assertSame(json_encode(['item' => self::MARKUP]), \Engine::Render('probe', 'show', []));
+        // A resposta JSON segue Engine::encodeJson (sem escape de template) e os dados
+        // voltam intactos na decodificação.
+        $json = \Engine::Render('probe', 'show', []);
+        self::assertSame(\Engine::encodeJson(['item' => self::MARKUP]), $json);
+        self::assertSame(['item' => self::MARKUP], json_decode($json, true));
         self::assertSame([], $this->capturedDeprecations(), 'sem template, sem aviso');
     }
 }
