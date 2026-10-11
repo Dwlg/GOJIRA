@@ -11,8 +11,10 @@ define('PROJECT_NAME', 'Project Demo');
 define('VERSION', '0.0.1');
 
 //Valores lidos do ambiente (ou do .env, ver .env.example); o segundo argumento é o fallback.
-//Fora de DEV, DB_USER e DB_PWD com valor de exemplo impedem o boot (system/init.php).
-define('ENVIRONMENT', Gojira_Env::get('ENVIRONMENT', 'DEV'));
+//Padrão 'PROD': display_errors fica desligado e credencial de exemplo recusa o
+//boot (system/init.php) mesmo sem .env configurado. Defina ENVIRONMENT=DEV
+//explicitamente para desenvolvimento local.
+define('ENVIRONMENT', Gojira_Env::get('ENVIRONMENT', 'PROD'));
 
 //BASE DE DADOS
 define('DB_NAME', Gojira_Env::get('DB_NAME', 'db_name'));

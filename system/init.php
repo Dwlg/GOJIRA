@@ -5,7 +5,7 @@
       require_once( __DIR__ . '/class/session.class.php' );
       Gojira_Session::autostart();
 
-      define('GOJIRA_VERSION', '1.0.2');
+      define('GOJIRA_VERSION', '1.1.0');
 
       //Precisa saber a pasta do sistema que está sendo iniciado
       if( !isset( $absPath ) ) throw( new Exception('$absPath não localizado, configure a pasta base do projeto') );

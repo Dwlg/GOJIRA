@@ -126,7 +126,9 @@ require_once( __DIR__ . '/constants.php' );
 
    //Busca o idioma atual
    if( !isset( $_SESSION['current-lang'] ) ) $_SESSION['current-lang'] = $globals->environment->default_lang->id;
-   $globals->environment->lang = $lang->getData($_SESSION['current-lang'])[0];
+   //getData() recebe array coluna => valor (ou Gojira_Raw), nunca um escalar cru,
+   //coerente com GOJIRA_MODEL_STRICT mesmo sem o modo estrito ligado aqui.
+   $globals->environment->lang = $lang->getData(['id' => $_SESSION['current-lang']])[0];
 
    //Verifica se é uma requisição ajax
    $globals->environment->is_ajax = isset($_SERVER['HTTP_X_REQUESTED_WITH']) && $_SERVER['HTTP_X_REQUESTED_WITH'] == 'XMLHttpRequest';
