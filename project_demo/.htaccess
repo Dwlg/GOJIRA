@@ -11,12 +11,28 @@
    </IfModule>
 </FilesMatch>
 
+# system/ e vendor/ nunca são servidos pela web a partir daqui, mesmo em uma
+# instalação em que eles entram no docroot por symlink (hospedagem compartilhada
+# com um único system/ para vários projetos). Vale com ou sem mod_rewrite e
+# independe do .htaccess que o próprio system/ tenha.
+<IfModule mod_authz_core.c>
+   <If "%{REQUEST_URI} =~ m#^/?(?:[^/]+/)*?(system|vendor)(/|$)#i">
+      Require all denied
+   </If>
+</IfModule>
+<IfModule !mod_authz_core.c>
+   <IfModule mod_rewrite.c>
+      RewriteEngine On
+      RewriteRule (^|/)(system|vendor)(/|$) - [F,L]
+   </IfModule>
+</IfModule>
+
 RewriteEngine On
 
-RewriteBase /project_demo/
+# Sem RewriteBase fixo: o mod_rewrite deriva a base do caminho físico do
+# próprio .htaccess, então a regra funciona tanto na raiz do vhost quanto em
+# qualquer subpasta (ex.: /project_demo/), sem editar este arquivo por ambiente.
 
-RewriteRule ^system/(.*) system/$1 [L]
-RewriteRule ^vendor/(.*) vendor/$1 [L]
 RewriteRule ^webroot/(.*) webroot/$1 [L]
 
 RewriteCond %{REQUEST_FILENAME} !-f
