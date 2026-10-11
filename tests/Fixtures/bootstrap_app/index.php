@@ -25,9 +25,16 @@ if (!defined('ENVIRONMENT')) {
 define('PROJECT_ID', 'HTTPTEST');
 ini_set('display_errors', '1');
 ini_set('html_errors', '0');
-error_reporting(E_ALL);
+// E_USER_DEPRECATED fora da tela: os avisos de transição do framework (ex.: $globals
+// inteiro no template) têm teste próprio em TemplateRenderTest e não fazem parte do
+// corpo HTTP comparado aqui. Qualquer outro erro continua aparecendo no corpo.
+error_reporting(E_ALL & ~E_USER_DEPRECATED);
 
 $absPath = str_replace('\\', '/', __DIR__) . '/';
+
+// URL base fixa, como numa aplicação em PROD: sem ela o init.php recusa o boot
+// com BASE_URL detectado pelo Host e sem TRUSTED_HOSTS (Gojira_Host).
+$baseURL = 'http://127.0.0.1/';
 
 $globals                     = new stdClass();
 $globals->database           = new stdClass();
