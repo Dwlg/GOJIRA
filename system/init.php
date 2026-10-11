@@ -1,6 +1,9 @@
 <?php
 
-      @session_start();
+      //Sessão: automática por padrão; sob demanda com GOJIRA_NO_SESSION_AUTOSTART
+      //(ver system/class/session.class.php).
+      require_once( __DIR__ . '/class/session.class.php' );
+      Gojira_Session::autostart();
 
       define('GOJIRA_VERSION', '1.0.2');
 
@@ -29,7 +32,8 @@
       //Objetos mais comumente usados
       $globals->tools  = new Tool();
       $globals->cfg    = new Config( $absPath );
-      $globals->smarty = new \Smarty\Smarty();
+      //Com GOJIRA_DISABLE_SMARTY o Smarty não é carregado; o Engine responde sem template.
+      $globals->smarty = ( defined('GOJIRA_DISABLE_SMARTY') && GOJIRA_DISABLE_SMARTY == true ) ? null : new \Smarty\Smarty();
 
       //Se não tiver gerado na aplicação a URL base, gera agora.
       if( !isset( $baseURL ) ){
@@ -139,8 +143,10 @@
 
 
       //Configura o smarty
+      if( $globals->smarty !== null ){
       $globals->smarty->setTemplateDir( $globals->environment->viewPath );
       $globals->smarty->caching = \Smarty\Smarty::CACHING_OFF;
+      }
 
       //Adiciona o controle de helpers (autoload)
       require_once( $globals->environment->systemIncPath . 'helpers.php' );

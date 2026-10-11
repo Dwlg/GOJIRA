@@ -88,13 +88,14 @@ abstract class Model extends Connection{
 				$objModel->onLoad();
 				return $objModel;
 			} catch( Exception $e ){
-				throw( new ModelException( "Error in instantiation of Model <strong>\"" . $class . "\"</strong> MSG: " . $e->getMessage(), 0x2002 ) );
+				error_log( '[GOJIRA] Model::Load: falha ao instanciar "' . $class . '": ' . $e->getMessage() );
+				throw( new ModelException( 'Error in instantiation of Model "' . ControllerException::label( $class ) . '"', 0x2002 ) );
 			}
 			
 		} else {
 			
 			//Model não localizado no disco
-			throw( new ModelException( "Model <strong>\"" . $class . "\"</strong> not found in <strong>\"" . $dir . $file . "\"</strong>", 0x2001 ) );
+			throw( new ModelException( 'Model "' . ControllerException::label( $class ) . '" not found', 0x2001 ) );
 			
 		}
 		
@@ -366,7 +367,7 @@ abstract class Model extends Connection{
 		if( is_array( $this->structure ) ) return;
 		
 		if( ! $this->tableExist( $this->table ) ){
-			throw( new ModelException( "Invalid table: <strong>\"" . $this->table . "\"</strong>", 0x2003 ) );
+			throw( new ModelException( 'Invalid table: "' . ControllerException::label( $this->table ) . '"', 0x2003 ) );
 		}
 		
 		$sql  =  'SELECT COLUMN_NAME AS `name`, ' .
@@ -653,7 +654,10 @@ abstract class Model extends Connection{
 			} else {
 				
 				//Se der erro na hora de salvar, joga um erro para o nivel de cima
-				throw( new ModelException( "Error while saving - " . $sql, 0x2015 ) );
+				//O SQL (com os valores) não vai na mensagem nem no log; o log leva a tabela
+				//e, quando a conexão o guardou, o erro do banco.
+				error_log( '[GOJIRA] Model::saveRow falhou na tabela `' . $table . '`: ' . ( self::$connection instanceof mysqli ? self::$connection->errno . ' ' . self::$connection->error : '' ) );
+				throw( new ModelException( "Error while saving", 0x2015 ) );
 				
 			}
 		}

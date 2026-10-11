@@ -68,11 +68,13 @@
                
                } else {
                   //Classe declarada errada
-                  throw( new ControllerException( "Wrong class declaration for controller <strong>\"" . $class . "\"</strong> in <strong>\"" . $dir . $file . "\"</strong>", 0x1002 ) );
+                  //O caminho do arquivo vai só para o log
+                  error_log( '[GOJIRA] Controller::Load: classe "' . $class . '" não declarada em ' . $full );
+                  throw( new ControllerException( 'Wrong class declaration for controller "' . ControllerException::label( $class ) . '"', 0x1002 ) );
                }
             } else {
 					//Controller não localizado no disco
-					throw( new ControllerException( "Controller <strong>\"" . $class . "\"</strong> not found in <strong>\"" . $dir . $file . "\"</strong>", 0x1001 ) );
+					throw( new ControllerException( 'Controller "' . ControllerException::label( $class ) . '" not found', 0x1001 ) );
 
 				}
 
@@ -115,7 +117,7 @@
                      return call_user_func_array( array( $objController, 'unauthorized'), array( $method, $param ));
                   }
 
-                  throw( new ControllerException( "Access denied for method <strong>\"" . $method . "\"</strong> in Controller Object <strong>\"" . $class . "\"</strong>", 0x1012 ) );
+                  throw( new ControllerException( 'Access denied for method "' . ControllerException::label( $method ) . '" in Controller Object "' . ControllerException::label( $class ) . '"', 0x1012 ) );
                }
 
                //Retorna o resultado da função dentro do model
@@ -129,7 +131,7 @@
 
                   } else {
                      //Execução não altorizada
-                     throw( new ControllerException( "Unauthorized execution for method <strong>\"" . $method . "\"</strong> in Controller Object <strong>\"" . $class . "\"</strong>", 0x1012 ) );
+                     throw( new ControllerException( 'Unauthorized execution for method "' . ControllerException::label( $method ) . '" in Controller Object "' . ControllerException::label( $class ) . '"', 0x1012 ) );
 
                   }
                }
@@ -139,7 +141,7 @@
 
             } else {
                //Metodo não localizado dentro do controller (ou não público - ver acima)
-               throw( new ControllerException( "Method <strong>\"" . $method . "\"</strong> not found in Controller Object <strong>\"" . $class . "\"</strong>", 0x1011 ) );
+               throw( new ControllerException( 'Method "' . ControllerException::label( $method ) . '" not found in Controller Object "' . ControllerException::label( $class ) . '"', 0x1011 ) );
             }
 
             return $ret;
@@ -265,6 +267,14 @@
 
 			function __construct( $message, $err_cod ){
 				parent::__construct( $message, $err_cod );
+			}
+
+			//Nome de classe ou método como aparece na mensagem: sem HTML nem caminho
+			//(o valor pode vir da URL). Fica aqui, e não no Controller, para não
+			//tirar do despacho uma action do projeto com o mesmo nome.
+			static function label( $name ){
+				$name = preg_replace( '/[^A-Za-z0-9_]/', '', is_scalar( $name ) ? (string)$name : '' );
+				return strlen( $name ) > 64 ? substr( $name, 0, 64 ) . '...' : $name;
 			}
 
 		}
