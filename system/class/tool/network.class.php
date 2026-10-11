@@ -6,10 +6,10 @@
 */
       
 
-      //Classe de email PHPMailer usada pelo tools/network.class.php
-      require_once( __DIR__ . '/../../vendor/PHPMailer-6.0.7/src/PHPMailer.php' );
-      require_once( __DIR__ . '/../../vendor/PHPMailer-6.0.7/src/SMTP.php' );
-      require_once( __DIR__ . '/../../vendor/PHPMailer-6.0.7/src/Exception.php' );
+      //Classe de email PHPMailer (phpmailer/phpmailer no composer.json), carregada
+      //sob demanda pelo autoload do Composer. O init.php já inclui o autoload;
+      //o require_once abaixo cobre quem usa o Tool fora do bootstrap.
+      require_once( __DIR__ . '/../../vendor/autoload.php' );
       use PHPMailer\PHPMailer\PHPMailer;
       use PHPMailer\PHPMailer\SMTP;
       use PHPMailer\PHPMailer\Exception;

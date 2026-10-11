@@ -15,6 +15,9 @@
     
          private $cache;
          private $file;
+         private $dirty = array();   //Chaves alteradas por este processo desde o último save()
+
+         const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
 
 
          function __construct1( $appRoot ){
@@ -37,6 +40,7 @@
             if( ! isset( $this->cache[ $class ] ) ) $this->cache[ $class ] = array();
 				
             $this->cache[ $class ][ $id ] = $val;
+            $this->dirty[ $class ][ $id ] = $val;
             $this->save();
             
 				return true;
@@ -68,6 +72,7 @@
                //Caso contrario, cria no arquivo
                } elseif( !is_null( $def ) ) {
                   $this->cache[ $class ][ $id ] = $def;
+                  $this->dirty[ $class ][ $id ] = $def;
                   $this->save();
                }
             }
@@ -78,6 +83,32 @@
 			
 			
 			
+			//Aplica o timezone do PHP e o lc_time_names do banco a partir de uma seção
+			//(no init.php, PROJECT_ID . '_ENGINE'). Chaves TIMEZONE e LC_TIME_NAMES; ausentes,
+			//valem os padrões America/Sao_Paulo e pt_BR. Valor inválido gera E_USER_WARNING
+			//e cai no padrão. Não grava as chaves no arquivo.
+			function applyLocale( $class ){
+
+            $timezone = $this->getConfig( $class, 'TIMEZONE' );
+            if( empty( $timezone ) || ! is_string( $timezone ) ) $timezone = self::DEFAULT_TIMEZONE;
+
+            if( ! @date_default_timezone_set( $timezone ) ){
+               trigger_error( sprintf( "TIMEZONE '%s' inválido em [%s]; usando %s", $timezone, $class, self::DEFAULT_TIMEZONE ), E_USER_WARNING );
+               date_default_timezone_set( self::DEFAULT_TIMEZONE );
+            }
+
+            $lcTimeNames = $this->getConfig( $class, 'LC_TIME_NAMES' );
+            try{
+               Connection::setLcTimeNames( is_string( $lcTimeNames ) ? $lcTimeNames : null );
+            } catch( InvalidArgumentException $e ){
+               trigger_error( sprintf( "LC_TIME_NAMES inválido em [%s]; usando %s", $class, Connection::DEFAULT_LC_TIME_NAMES ), E_USER_WARNING );
+               Connection::setLcTimeNames( null );
+            }
+
+			}
+
+
+
 			//Cria a tabela na base de dados, se ainda não existir
 			function create(){
 				
@@ -88,34 +119,95 @@
             
             //Carrega todo o arquivo config na memória
             } else {
-               $this->cache = parse_ini_file( $this->file, true );
-
-               foreach( $this->cache as $i => $a ){
-                  foreach( $a as $ii => $aa ){
-                     $this->cache[$i][$ii] = urldecode($aa);
-                  }
-               }
+               $this->cache = $this->read();
 
             }
 				
 			}
          
          
-         //Salva o cache devolta no arquivo
-         function save(){
-            
-            $f = fopen( $this->file, 'w+' );
-            
-            foreach( $this->cache as $ci => $ck ){
-               if( count( $ck ) > 0 ){
-                  fwrite( $f, "\n[" . $ci . "]\n" );
+         //Lê o arquivo com trava compartilhada, para não ver um save() pela metade
+         private function read(){
+
+            $f = @fopen( $this->file, 'r' );
+            if( $f === false ) return array();
+
+            flock( $f, LOCK_SH );
+            $content = stream_get_contents( $f );
+            flock( $f, LOCK_UN );
+            fclose( $f );
+
+            return $this->decode( (string) $content );
+
+         }
+
+
+         //Converte o conteúdo do ini em array, com os valores decodificados
+         private function decode( $content ){
+
+            $data = parse_ini_string( $content, true );
+            if( ! is_array( $data ) ) return array();
+
+            foreach( $data as $i => $a ){
+               if( ! is_array( $a ) ) continue;
+               foreach( $a as $ii => $aa ){
+                  $data[$i][$ii] = urldecode($aa);
+               }
+            }
+            return $data;
+
+         }
+
+
+         //Converte o array no conteúdo do ini
+         private function encode( $data ){
+
+            $content = '';
+            foreach( $data as $ci => $ck ){
+               if( is_array( $ck ) && count( $ck ) > 0 ){
+                  $content .= "\n[" . $ci . "]\n";
                   foreach( $ck as $ki => $kk ){
-                     fwrite( $f, $ki . '="' . urlencode($kk) . "\"\n" );
+                     $content .= $ki . '="' . urlencode($kk) . "\"\n";
                   }
                }
             }
+            return $content;
+
+         }
+
+
+         //Salva no arquivo com trava exclusiva (LOCK_EX). Dentro da trava, relê o
+         //arquivo e aplica só as chaves alteradas aqui, para não apagar o que outro
+         //processo gravou depois que este carregou o cache.
+         function save(){
+
+            $f = @fopen( $this->file, 'c+' );
+            if( $f === false ) return false;
+
+            if( ! flock( $f, LOCK_EX ) ){
+               fclose( $f );
+               return false;
+            }
+
+            $data = $this->decode( (string) stream_get_contents( $f ) );
+            foreach( $this->dirty as $ci => $ck ){
+               foreach( $ck as $ki => $kk ){
+                  if( ! isset( $data[ $ci ] ) || ! is_array( $data[ $ci ] ) ) $data[ $ci ] = array();
+                  $data[ $ci ][ $ki ] = $kk;
+               }
+            }
+
+            $ok = ftruncate( $f, 0 ) && rewind( $f ) && fwrite( $f, $this->encode( $data ) ) !== false && fflush( $f );
+
+            flock( $f, LOCK_UN );
             fclose( $f );
-            
+
+            if( $ok ){
+               $this->cache = $data;
+               $this->dirty = array();
+            }
+            return $ok;
+
          }
 			
 			

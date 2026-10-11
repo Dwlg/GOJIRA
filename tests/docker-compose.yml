@@ -1,0 +1,79 @@
+# Reproduz a CI localmente (o host não precisa de PHP nem de Composer).
+#
+# Instalar o PHPUnit (uma vez; o vendor serve para todas as versões do PHP):
+#   docker compose -f tests/docker-compose.yml run --rm php84 composer install -d tools/phpunit
+#
+# Rodar as suítes:
+#   docker compose -f tests/docker-compose.yml run --rm php84 tools/phpunit/vendor/bin/phpunit
+#   docker compose -f tests/docker-compose.yml run --rm php80 tools/phpunit/vendor/bin/phpunit --testsuite unit
+#
+# Contra MariaDB 10.6:
+#   docker compose -f tests/docker-compose.yml run --rm -e GOJIRA_TEST_DB_HOST=mariadb106 php84 tools/phpunit/vendor/bin/phpunit --testsuite integration
+#
+# Limpar: docker compose -f tests/docker-compose.yml down
+
+x-php: &php
+  volumes:
+    - ..:/app
+  working_dir: /app
+  environment:
+    GOJIRA_TEST_DB_HOST: mysql80
+    GOJIRA_TEST_DB_USER: gojira
+    GOJIRA_TEST_DB_PASSWORD: gojira
+    GOJIRA_TEST_DB_NAME: gojira_test
+    COMPOSER_CACHE_DIR: /tmp/composer-cache
+  depends_on:
+    mysql80:
+      condition: service_healthy
+
+services:
+  php80:
+    <<: *php
+    build: { context: docker, args: { PHP_VERSION: "8.0", COMPOSER_DEPS: "0" } }
+    image: gojira-test-php:8.0
+  php81:
+    <<: *php
+    build: { context: docker, args: { PHP_VERSION: "8.1" } }
+    image: gojira-test-php:8.1
+  php82:
+    <<: *php
+    build: { context: docker, args: { PHP_VERSION: "8.2" } }
+    image: gojira-test-php:8.2
+  php83:
+    <<: *php
+    build: { context: docker, args: { PHP_VERSION: "8.3" } }
+    image: gojira-test-php:8.3
+  php84:
+    <<: *php
+    build: { context: docker, args: { PHP_VERSION: "8.4" } }
+    image: gojira-test-php:8.4
+
+  mysql80:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: gojira_test
+      MYSQL_USER: gojira
+      MYSQL_PASSWORD: gojira
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  mariadb106:
+    image: mariadb:10.6
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: gojira_test
+      MARIADB_USER: gojira
+      MARIADB_PASSWORD: gojira
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      timeout: 3s
+      retries: 40

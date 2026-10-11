@@ -1,14 +1,35 @@
 <?php
 
 define('SYSDIR_NAME', '../system/');
-require_once('constants.php');
 
-   @session_start();
+//.env opcional (fora do git). Sem o arquivo, valem os defaults do constants.php.
+//Ordem: GOJIRA_ENV_FILE (variável do servidor), .env na pasta pai do projeto e,
+//por compatibilidade, .env na pasta do projeto (protegido pelo .htaccess).
+//O da pasta pai só é usado se estiver fora do DOCUMENT_ROOT, porque lá não há
+//.htaccess que o proteja. Variáveis do servidor têm precedência sobre o .env.
+require_once( __DIR__ . '/' . SYSDIR_NAME . 'class/env.class.php' );
+$envFiles = [ Gojira_Env::get( 'GOJIRA_ENV_FILE' ), dirname( __DIR__ ) . '/.env', __DIR__ . '/.env' ];
+if( is_file( $envFiles[1] ) && Gojira_Env::servedByWeb( $envFiles[1], $_SERVER ) ){
+   error_log( 'GOJIRA: .env da pasta pai ignorado por estar dentro do DOCUMENT_ROOT; mova-o ou use GOJIRA_ENV_FILE.' );
+   $envFiles[1] = null;
+}
+Gojira_Env::loadFirst( $envFiles );
+unset( $envFiles );
+
+require_once( __DIR__ . '/constants.php' );
+
+   //A sessão é aberta pelo framework, no system/init.php (Gojira_Session::autostart),
+   //para que GOJIRA_SESSION_HARDENING e GOJIRA_NO_SESSION_AUTOSTART valham aqui.
+   //Abrir a sessão antes do init.php impediria o framework de configurar o cookie.
 
    setlocale(LC_MONETARY, 'pt_BR');
    date_default_timezone_set('America/Sao_Paulo');
 
    error_reporting( E_ALL );
+
+   //Erros na tela só em desenvolvimento. Fora de DEV eles vão só para o log.
+   ini_set( 'display_errors', ENVIRONMENT === 'DEV' ? '1' : '0' );
+   ini_set( 'log_errors', '1' );
 
    //Remove o cache do SMARTY
    define('TPL_CACHE',0);

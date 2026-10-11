@@ -99,6 +99,36 @@
 		}
 
 
+		//Valida um nome de classe/componente/model para uso seguro em caminhos de arquivo.
+		//Impede path traversal (../) e inclusão de arquivos arbitrários via nome vindo da URL.
+		//Nomes válidos contêm apenas letras, números e underscore.
+		//\A e \z ancoram a string inteira ($ aceitaria uma quebra de linha no final).
+		public static function isSafeName( $name ){
+			return is_string( $name ) && $name !== '' && preg_match('/\A[A-Za-z0-9_]+\z/', $name) === 1;
+		}
+
+
+		//Resolve $dir/$file e devolve o caminho real somente se o arquivo existir
+		//dentro de $dir (links simbólicos para fora do diretório são recusados).
+		//Devolve false caso contrário. Há sempre um único separador entre $dir e
+		//$file, com ou sem barra final em $dir.
+		public static function confinedFile( $dir, $file ){
+			$dir  = (string) $dir;
+			$path = ( $dir === '' ? '' : rtrim( $dir, '/\\' ) . '/' ) . ltrim( (string) $file, '/\\' );
+
+			$base = realpath( $dir );
+			$real = realpath( $path );
+
+			if( $base === false || $real === false || !is_file( $real ) ){
+				return false;
+			}
+
+			$base = rtrim( $base, DIRECTORY_SEPARATOR ) . DIRECTORY_SEPARATOR;
+
+			return strpos( $real, $base ) === 0 ? $real : false;
+		}
+
+
 		//Retorna o caminho absoluto atual
 		public function __absPath(){
 			return substr( __FILE__, 0, strlen( __FILE__ ) - strlen( end( explode( "/", __FILE__ ) ) ) );

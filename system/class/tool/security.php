@@ -9,8 +9,17 @@
 			
 			
 			//Remove conteudo que pode ser usado para sql_injection de uma query
+			//@deprecated Não protege contra injeção (não escapa aspas) e altera dados legítimos.
+			//            Use Connection::escape() para valores entre aspas, ou run()/runAll()/runGet().
+			//            O comportamento continua o mesmo até a remoção na 2.0.
 		   function antiInjection($str, $lTags = false, $lHtml = false) {
-	   	
+
+				static $warned = false;
+				if( !$warned ){
+					$warned = true;
+					trigger_error( 'Tool_Security::antiInjection() is deprecated; use Connection::escape() or run()/runAll()/runGet()', E_USER_DEPRECATED );
+				}
+
 				if( !$lHtml ) {
 			      
 					$str = preg_replace("/(alter table|insert into|delete from|update table|drop table|show tables|\*|--|\\\\)/i","", $str ?? '');
@@ -132,12 +141,92 @@
          
          
          
+         //Encripta uma string com AES-256-GCM (openssl). A chave é derivada com encrypt_key()
+         //e precisa ter ao menos 16 bytes. $aad (opcional) é autenticado, mas não cifrado:
+         //o mesmo valor precisa ser passado ao decrypt().
+         //Retorna base64( iv[12] . tag[16] . texto cifrado ).
+         function encrypt( $key, $value, $aad = '' ){
+
+            $this->requireOpenssl();
+            $this->requireKey( $key );
+
+            $iv  = random_bytes( 12 );
+            $tag = '';
+            $ct  = openssl_encrypt( (string) $value, 'aes-256-gcm', $this->encrypt_key( $key ), OPENSSL_RAW_DATA, $iv, $tag, (string) $aad, 16 );
+
+            if( $ct === false ){
+               throw new RuntimeException( 'Falha ao encriptar com AES-256-GCM.' );
+            }
+
+            return base64_encode( $iv . $tag . $ct );
+         }
+
+
+         //Desencripta um valor gerado por encrypt(). Retorna false se o valor
+         //estiver corrompido, adulterado, ou se a chave ou o $aad estiverem errados.
+         function decrypt( $key, $value, $aad = '' ){
+
+            $this->requireOpenssl();
+            $this->requireKey( $key );
+
+            $raw = base64_decode( (string) $value, true );
+            if( $raw === false || strlen( $raw ) < 28 ){
+               return false;
+            }
+
+            $iv  = substr( $raw, 0, 12 );
+            $tag = substr( $raw, 12, 16 );
+            $ct  = substr( $raw, 28 );
+
+            return openssl_decrypt( $ct, 'aes-256-gcm', $this->encrypt_key( $key ), OPENSSL_RAW_DATA, $iv, $tag, (string) $aad );
+         }
+
+
+         //Chave vazia ou curta não é aceita
+         private function requireKey( $key ){
+
+            if( ! is_string( $key ) || strlen( $key ) < 16 ){
+               throw new InvalidArgumentException( 'A chave de encrypt()/decrypt() precisa ter ao menos 16 bytes.' );
+            }
+         }
+
+
+         private function requireOpenssl(){
+
+            if( ! function_exists( 'openssl_encrypt' ) ){
+               throw new RuntimeException( 'A extensão openssl é necessária para encrypt()/decrypt().' );
+            }
+         }
+
+
+         //Avisa uma vez por requisição que o recurso legado com mcrypt foi descontinuado
+         private function mcryptDeprecated( $function ){
+
+            static $warned = array();
+
+            if( ! isset( $warned[ $function ] ) ){
+               $warned[ $function ] = true;
+               trigger_error( $function . '() está descontinuada (usa mcrypt); use ' . str_replace( '_str', '', $function ) . '(), com AES-256-GCM.', E_USER_DEPRECATED );
+            }
+
+            if( ! function_exists( 'mcrypt_encrypt' ) ){
+               throw new RuntimeException( $function . '() depende da extensão mcrypt, que não existe no PHP 7.2 ou superior. Use ' . str_replace( '_str', '', $function ) . '().' );
+            }
+         }
+
+
          //Encripta uma string
-         function encrypt_str( $key, $value, $algorithm = MCRYPT_RIJNDAEL_256, $mode = MCRYPT_MODE_CBC ){
+         //DESCONTINUADA: depende de mcrypt. Use encrypt().
+         function encrypt_str( $key, $value, $algorithm = null, $mode = null ){
+
+            $this->mcryptDeprecated( __FUNCTION__ );
+
+            $algorithm = $algorithm ?? constant( 'MCRYPT_RIJNDAEL_256' );
+            $mode      = $mode      ?? constant( 'MCRYPT_MODE_CBC' );
             
             # create a random IV to use with CBC encoding
             $iv_size = mcrypt_get_iv_size($algorithm, $mode );
-            $iv = mcrypt_create_iv($iv_size, MCRYPT_RAND);
+            $iv = mcrypt_create_iv($iv_size, constant( 'MCRYPT_RAND' ));
             
             # creates a cipher text compatible with AES (Rijndael block size = 256)
             # to keep the text confidential - only suitable for encoded input that never ends with value 00h
@@ -155,7 +244,13 @@
          
          
          //Desencripta uma string
-         function decrypt_str( $key, $value, $algorithm = MCRYPT_RIJNDAEL_256, $mode = MCRYPT_MODE_CBC ){
+         //DESCONTINUADA: depende de mcrypt. Use decrypt().
+         function decrypt_str( $key, $value, $algorithm = null, $mode = null ){
+
+            $this->mcryptDeprecated( __FUNCTION__ );
+
+            $algorithm = $algorithm ?? constant( 'MCRYPT_RIJNDAEL_256' );
+            $mode      = $mode      ?? constant( 'MCRYPT_MODE_CBC' );
             
             # Decode to bin
             $ciphertext_dec = base64_decode($value);

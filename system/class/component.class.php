@@ -31,6 +31,11 @@
                $globals = $GLOBALS['globals'];
             }
 
+            //Impede path traversal / inclusão de arquivo arbitrário via nome vindo da URL
+            if( !GojiraCore::isSafeName( $class ) ){
+               throw( new ComponentException( "Invalid component name", 0x3001 ) );
+            }
+
             $file  = strtolower($class) . '.php';
             $class = ucwords(strtolower($class), "_0123456789");
 
@@ -40,17 +45,20 @@
             $modelClass = $class . '_ComponentModel';
             $modelDir   = $globals->environment->componentModelPath;
 
-            //Verifica se o controller (parte base e principal) existe
-            if( file_exists( $controllerDir . $file ) ){
+            //Verifica se o controller (parte base e principal) existe, confinado ao diretório esperado
+            $controllerFile = GojiraCore::confinedFile( $controllerDir, $file );
+            if( $controllerFile !== false ){
 
-               //Se o model desse componente existir
-               if( file_exists(  $modelDir . $file ) ){
-                  
-                  require_once( $modelDir . $file );
+               //Se o model desse componente existir (também confinado)
+               $modelFile = GojiraCore::confinedFile( $modelDir, $file );
+               if( $modelFile !== false ){
+
+                  require_once( $modelFile );
                   try{
                      $modelObj = new $modelClass( $globals );
                   } catch( Exception $e ){
-                     throw( new ComponentException( "Error in instantiation of Model for component <strong>\"" . $class . "\"</strong> MSG: " . $e->getMessage(), 0x3002 ) );
+                     error_log( '[GOJIRA] Component::Load: falha ao instanciar o model de "' . $class . '": ' . $e->getMessage() );
+                     throw( new ComponentException( 'Error in instantiation of Model for component "' . ControllerException::label( $class ) . '"', 0x3002 ) );
                   }
 
                //Se não existir um model para o componente, instancia um model generico para facilitar acesso a base
@@ -62,7 +70,7 @@
                   $modelObj->onLoad();
                }
 
-               require_once( $controllerDir . $file );
+               require_once( $controllerFile );
 
                try{
 
@@ -75,12 +83,13 @@
                   return $controllerObj;
 
                } catch( Exception $e ){
-                  throw( new ComponentException( "Error in instantiation of Controller for component <strong>\"" . $class . "\"</strong> MSG: " . $e->getMessage(), 0x3003 ) );
+                  error_log( '[GOJIRA] Component::Load: falha ao instanciar o controller de "' . $class . '": ' . $e->getMessage() );
+                  throw( new ComponentException( 'Error in instantiation of Controller for component "' . ControllerException::label( $class ) . '"', 0x3003 ) );
                }
                
                
             } else {
-               throw( new ComponentException( "Component Controller <strong>\"" . $class . "\"</strong> not found in <strong>\"" . $controllerDir . $file . "\"</strong>", 0x3001) );
+               throw( new ComponentException( 'Component Controller "' . ControllerException::label( $class ) . '" not found', 0x3001) );
             }
             
          }

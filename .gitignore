@@ -1,2 +1,11 @@
 dist/
 dist/*
+
+# Configuração local: gerada em execução ou com credenciais. Nunca versionar.
+app_configs.ini
+.env
+.env.*
+!.env.example
+
+# Script de exemplo do PHPMailer; removido pelo composer (scripts) e fora do repositório
+system/vendor/phpmailer/phpmailer/get_oauth_token.php

@@ -1,10 +1,18 @@
 <?php
 
+      //Controle de acesso deny-by-default (opt-in). Ver docs/migration/auth-redesign-migration-guide.md.
+      require_once( __DIR__ . '/auth/accesspolicy.interface.php' );
+      require_once( __DIR__ . '/auth/mapaccesspolicy.class.php' );
+
 		abstract class Controller extends GojiraCore{
 
 			//Propriedades da classe
 			protected $globals;
          protected $model;
+
+         //AccessPolicy global (opcional). Nula por padrão: sem registro explícito via
+         //setAccessPolicy(), o comportamento de Controller::Call não muda em nada.
+         protected static $accessPolicy;
 
 			function __construct1( $globals ){
 
@@ -37,15 +45,21 @@
                $globals = $GLOBALS['globals'];
             }
 
+            //Impede path traversal / inclusão de arquivo arbitrário via nome vindo da URL
+            if( !GojiraCore::isSafeName( $class ) ){
+               throw( new ControllerException( "Invalid controller name", 0x1001 ) );
+            }
+
             $file  = strtolower($class) . '.php';
             $class = ucwords(strtolower($class), "_0123456789") . '_Controller';
 				$dir   = $globals->environment->controllerPath;
 
-				//Se localizar o arquivo no disco
-				if( file_exists(  $dir . $file ) ){
+				//Se localizar o arquivo no disco (e confinado ao diretório esperado)
+				$full = GojiraCore::confinedFile( $dir, $file );
+				if( $full !== false ){
 
                //Instancia o objeto
-					require_once( $dir . $file );
+					require_once( $full );
                
                if( class_exists( $class ) ){
                   $objController = new $class( $globals );
@@ -54,15 +68,27 @@
                
                } else {
                   //Classe declarada errada
-                  throw( new ControllerException( "Wrong class declaration for controller <strong>\"" . $class . "\"</strong> in <strong>\"" . $dir . $file . "\"</strong>", 0x1002 ) );
+                  //O caminho do arquivo vai só para o log
+                  error_log( '[GOJIRA] Controller::Load: classe "' . $class . '" não declarada em ' . $full );
+                  throw( new ControllerException( 'Wrong class declaration for controller "' . ControllerException::label( $class ) . '"', 0x1002 ) );
                }
             } else {
 					//Controller não localizado no disco
-					throw( new ControllerException( "Controller <strong>\"" . $class . "\"</strong> not found in <strong>\"" . $dir . $file . "\"</strong>", 0x1001 ) );
+					throw( new ControllerException( 'Controller "' . ControllerException::label( $class ) . '" not found', 0x1001 ) );
 
 				}
 
          }
+
+			//Registra/obtém a AccessPolicy global (opt-in). Null = sem controle de acesso
+			//além do beforeCall() de cada controller (comportamento atual, inalterado).
+			static function setAccessPolicy( $policy ){
+				self::$accessPolicy = $policy;
+			}
+
+			static function getAccessPolicy(){
+				return self::$accessPolicy;
+			}
 
 			//Executa um método dentro do controller
 			static function Call( $class, $method, $param, $globals = ''){
@@ -75,31 +101,47 @@
             $ret           = '';
             $objController = Controller::Load( $class, $globals );
 
-            //Se o metodo existir
-            if( method_exists( $objController, $method ) ){
+            //Só despacha método que o controller do projeto expõe de propósito
+            //(ver isDispatchable()). Método inexistente, não público ou de framework
+            //cai no mesmo caminho (not_found/0x1011), para não revelar o que existe.
+            $dispatchable = Controller::isDispatchable( $objController, $method );
+
+            if( $dispatchable ){
+
+               //Controle de acesso deny-by-default (opt-in - ver setAccessPolicy()).
+               $policy = Controller::getAccessPolicy();
+
+               if( $policy instanceof Gojira_AccessPolicy && ! $policy->isPublic( $class, $method ) && ! $policy->authorize( $class, $method, null ) ){
+
+                  if( method_exists( $objController, 'unauthorized' ) ){
+                     return call_user_func_array( array( $objController, 'unauthorized'), array( $method, $param ));
+                  }
+
+                  throw( new ControllerException( 'Access denied for method "' . ControllerException::label( $method ) . '" in Controller Object "' . ControllerException::label( $class ) . '"', 0x1012 ) );
+               }
 
                //Retorna o resultado da função dentro do model
                if( $objController->beforeCall( $class, $method, $param) !== false ){
                   $ret = call_user_func_array( array( $objController, $method), array( $param ));
-                  
+
                } else {
 
                   if( method_exists( $objController, 'unauthorized' ) ){
                      $ret = call_user_func_array( array( $objController, 'unauthorized'), array( $method, $param ));
-            
+
                   } else {
                      //Execução não altorizada
-                     throw( new ControllerException( "Unauthorized execution for method <strong>\"" . $method . "\"</strong> in Controller Object <strong>\"" . $class . "\"</strong>", 0x1012 ) );
-                     
+                     throw( new ControllerException( 'Unauthorized execution for method "' . ControllerException::label( $method ) . '" in Controller Object "' . ControllerException::label( $class ) . '"', 0x1012 ) );
+
                   }
                }
 
             } elseif( method_exists( $objController, 'not_found')  ) {
                $ret = call_user_func_array( array( $objController, 'not_found'), array( $method, $param ));
-               
+
             } else {
-               //Metodo não localizado dentro do controller
-               throw( new ControllerException( "Method <strong>\"" . $method . "\"</strong> not found in Controller Object <strong>\"" . $class . "\"</strong>", 0x1011 ) );
+               //Metodo não localizado dentro do controller (ou não público - ver acima)
+               throw( new ControllerException( 'Method "' . ControllerException::label( $method ) . '" not found in Controller Object "' . ControllerException::label( $class ) . '"', 0x1011 ) );
             }
 
             return $ret;
@@ -107,19 +149,95 @@
          }
          
          
+         //Diz se $method pode ser executado pela URL (ou pelo POST) em $objController.
+         //Regra: o método precisa ser
+         //  - público e não estático;
+         //  - sem o prefixo "__" (construtores, mágicos e os __constructN do GojiraCore);
+         //  - declarado numa subclasse de Controller (o controller do projeto ou o
+         //    AppController do projeto), e não em Controller ou GojiraCore;
+         //  - com nome que não exista em Controller/GojiraCore. Assim um gancho do
+         //    framework (onLoad, beforeCall...) continua fora do despacho mesmo quando
+         //    o projeto o sobrescreve no próprio controller;
+         //  - que não seja um dos tratadores not_found/unauthorized.
+         //Atenção: todo método público do AppController do projeto vira action em
+         //todos os controllers. Métodos auxiliares (inclusive set_*/get_*) devem
+         //ser protected.
+         //Os nomes de método do PHP não diferenciam maiúsculas, então a comparação
+         //também não diferencia (ONLOAD, __Construct etc. são recusados).
+         protected static function isDispatchable( $objController, $method ){
+
+            if( !is_string( $method ) || $method === '' || strncmp( $method, '__', 2 ) === 0 ){
+               return false;
+            }
+
+            if( !method_exists( $objController, $method ) || method_exists( 'Controller', $method ) ){
+               return false;
+            }
+
+            //not_found e unauthorized são tratadores chamados pelo próprio Call,
+            //não actions: /x/not_found não os executa diretamente.
+            if( in_array( strtolower( $method ), array( 'not_found', 'unauthorized' ), true ) ){
+               return false;
+            }
+
+            try{
+               $ref = new ReflectionMethod( $objController, $method );
+            } catch( ReflectionException $e ){
+               return false;
+            }
+
+            return $ref->isPublic()
+               && !$ref->isStatic()
+               && $ref->getDeclaringClass()->isSubclassOf( 'Controller' );
+         }
+
+
+         //Despacho legado por $_POST['class'] / $_POST['proc'] (usado pelo init.php).
+         //Devolve [class, proc] quando o POST pede o despacho, ou null quando não pede
+         //ou quando o projeto define GOJIRA_DISABLE_POST_DISPATCH (aí o despacho segue
+         //pela URL). O uso emite um E_USER_DEPRECATED por requisição.
+         //$disabled só existe para os testes; null lê a constante.
+         static function postDispatch( $post, $disabled = null ){
+
+            static $warned = false;
+
+            if( $disabled === null ){
+               $disabled = defined( 'GOJIRA_DISABLE_POST_DISPATCH' ) && GOJIRA_DISABLE_POST_DISPATCH;
+            }
+
+            if( $disabled || !is_array( $post ) || !isset( $post['class'] ) ){
+               return null;
+            }
+
+            if( !$warned ){
+               $warned = true;
+               trigger_error( 'GOJIRA: o despacho por $_POST[\'class\'] está obsoleto. Use a URL (controller/metodo) e defina GOJIRA_DISABLE_POST_DISPATCH para desligá-lo.', E_USER_DEPRECATED );
+            }
+
+            return array( $post['class'], ( isset( $post['proc'] ) ? $post['proc'] : '' ) );
+         }
+
+
          //Verifica se um controller existe
          static function Exists( $class ){
             
             $ret     = false;
             $globals = $GLOBALS['globals'];
+
+            //Nome inválido nunca existe como controller
+            if( !GojiraCore::isSafeName( $class ) ){
+               return false;
+            }
+
             $file    = strtolower($class) . '.php';
             $class   = ucwords(strtolower($class), "_0123456789") . '_Controller';
 				$dir     = $globals->environment->controllerPath;
-            
-            //Se localizar o arquivo no disco
-				if( file_exists(  $dir . $file ) ){
-               
-               require_once( $dir . $file );
+
+            //Se localizar o arquivo no disco (e confinado ao diretório esperado)
+				$full = GojiraCore::confinedFile( $dir, $file );
+				if( $full !== false ){
+
+               require_once( $full );
             
                if( class_exists( $class ) ){
                   $ret = true;
@@ -149,6 +267,14 @@
 
 			function __construct( $message, $err_cod ){
 				parent::__construct( $message, $err_cod );
+			}
+
+			//Nome de classe ou método como aparece na mensagem: sem HTML nem caminho
+			//(o valor pode vir da URL). Fica aqui, e não no Controller, para não
+			//tirar do despacho uma action do projeto com o mesmo nome.
+			static function label( $name ){
+				$name = preg_replace( '/[^A-Za-z0-9_]/', '', is_scalar( $name ) ? (string)$name : '' );
+				return strlen( $name ) > 64 ? substr( $name, 0, 64 ) . '...' : $name;
 			}
 
 		}

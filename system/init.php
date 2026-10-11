@@ -1,6 +1,9 @@
 <?php
 
-      @session_start();
+      //Sessão: automática por padrão; sob demanda com GOJIRA_NO_SESSION_AUTOSTART
+      //(ver system/class/session.class.php).
+      require_once( __DIR__ . '/class/session.class.php' );
+      Gojira_Session::autostart();
 
       define('GOJIRA_VERSION', '1.0.2');
 
@@ -15,6 +18,8 @@
       require_once( $systemPath . 'class/tool.class.php' );
       require_once( $systemPath . 'class/connection.class.php' );
       require_once( $systemPath . 'class/config.class.php' );
+      require_once( $systemPath . 'class/env.class.php' );
+      require_once( $systemPath . 'class/host.class.php' );
       require_once( $systemPath . 'class/login.class.php' );
       require_once( $systemPath . 'class/component.class.php' );
       require_once( $systemPath . 'class/controller.class.php' );
@@ -29,26 +34,24 @@
       //Objetos mais comumente usados
       $globals->tools  = new Tool();
       $globals->cfg    = new Config( $absPath );
-      $globals->smarty = new \Smarty\Smarty();
+      //Com GOJIRA_DISABLE_SMARTY o Smarty não é carregado; o Engine responde sem template.
+      $globals->smarty = ( defined('GOJIRA_DISABLE_SMARTY') && GOJIRA_DISABLE_SMARTY == true ) ? null : new \Smarty\Smarty();
 
-      //Se não tiver gerado na aplicação a URL base, gera agora.
-      if( !isset( $baseURL ) ){
-         $baseURL = $globals->cfg->getConfig( PROJECT_ID . '_ENGINE', 'BASE_URL');
-         if( empty( $baseURL ) ){
-            if( PHP_SAPI === 'cli'){
-               $baseURL = 'cli://';
-   
-            } else {
-               $baseURL = $_SERVER['SERVER_NAME'] . (isset( $_SERVER['REQUEST_URI'] ) ? $_SERVER['REQUEST_URI'] : '');
-               $baseURL = substr( $baseURL, 0, min(strrpos( $baseURL, '/' ), strlen( $baseURL )) );
-               if( substr( $baseURL, -1, 1 ) != '/' ) $baseURL .= '/';
-   
-               $globals->cfg->setConfig(PROJECT_ID . '_ENGINE', 'BASE_URL', $baseURL);
-            }
-         }
-      } else {
-         $globals->cfg->setConfig(PROJECT_ID . '_ENGINE', 'BASE_URL', $baseURL);
+      //Host fora de TRUSTED_HOSTS (quando configurado) recebe 400 antes de qualquer uso do Host
+      $trustedHosts = Gojira_Host::trustedHosts( $globals->cfg, PROJECT_ID . '_ENGINE' );
+      if( PHP_SAPI !== 'cli' && ! Gojira_Host::isTrusted( Gojira_Host::requestHost( $_SERVER ), $trustedHosts ) ){
+         http_response_code( 400 );
+         header( 'Content-Type: text/plain; charset=utf-8' );
+         echo 'Bad Request';
+         exit;
       }
+
+      //URL base: $baseURL da aplicação, GOJIRA_BASE_URL, app_configs.ini ou detectada.
+      //A detectada pelo Host não é mais gravada no app_configs.ini. Detectada sem
+      //TRUSTED_HOSTS: aviso fora de DEV, recusa em PROD/PRODUCTION ou com GOJIRA_STRICT_CONFIG.
+      $baseURL = Gojira_Host::resolveBaseUrl( $globals->cfg, PROJECT_ID . '_ENGINE', isset( $baseURL ) ? (string) $baseURL : null, $_SERVER, PHP_SAPI, $baseURLSource );
+      Gojira_Host::checkBaseUrlSource( $baseURLSource, $trustedHosts, defined( 'ENVIRONMENT' ) ? (string) ENVIRONMENT : 'DEV' );
+      unset( $baseURLSource, $trustedHosts );
 
 
       //Se não tiver a url do sistema, gera agora
@@ -60,7 +63,9 @@
       //Configurações globais
       ini_set("default_socket_timeout", 60);
       if( PHP_SAPI !== 'cli' ) ob_start();
-      date_default_timezone_set('America/Sao_Paulo');
+      //Timezone do PHP e lc_time_names do banco: [<PROJECT_ID>_ENGINE] TIMEZONE e LC_TIME_NAMES
+      //(padrões America/Sao_Paulo e pt_BR)
+      $globals->cfg->applyLocale( PROJECT_ID . '_ENGINE' );
 
 
 
@@ -79,8 +84,19 @@
          $globals->db = $globals->database;     //DEPRECADO - na lista de remoção em versões futuras. Carlsom A. Soares - 2019-09-15
       }
 
+      //Credenciais com valor de exemplo: log em DEV, aviso fora de DEV,
+      //boot recusado em PROD/PRODUCTION ou com GOJIRA_STRICT_CONFIG (ver Gojira_Env)
+      Gojira_Env::checkPlaceholders(
+         [ 'DB_USER ($globals->database->user)'    => isset( $globals->database->user )     ? $globals->database->user     : '',
+           'DB_PWD ($globals->database->password)' => isset( $globals->database->password ) ? $globals->database->password : '' ],
+         defined( 'ENVIRONMENT' ) ? (string) ENVIRONMENT : 'DEV'
+      );
+
       //Verifica se tem os dados para conexão
       if( isset( $globals->database ) ){
+
+         //Charset da conexão (padrão 'utf8'; 'utf8mb4' para emoji e afins)
+         Connection::setCharset( isset( $globals->database->charset ) ? $globals->database->charset : null );
          
          $globals->connection = new Connection( $globals->database->host, $globals->database->user, $globals->database->password );
          
@@ -139,8 +155,11 @@
 
 
       //Configura o smarty
+      if( $globals->smarty !== null ){
       $globals->smarty->setTemplateDir( $globals->environment->viewPath );
       $globals->smarty->caching = \Smarty\Smarty::CACHING_OFF;
+      Engine::configureSmarty( $globals->smarty );   //GOJIRA_ESCAPE_HTML (opt-in)
+      }
 
       //Adiciona o controle de helpers (autoload)
       require_once( $globals->environment->systemIncPath . 'helpers.php' );
@@ -162,12 +181,14 @@
 
       
       //Cria os parametos de inicialização das classes
-      if( isset( $_POST['class'] ) ){
+      //Despacho legado por POST (obsoleto, emite E_USER_DEPRECATED). Com
+      //GOJIRA_DISABLE_POST_DISPATCH definida, class/proc do POST são ignorados.
+      $postDispatch = Controller::postDispatch( $_POST );
+      if( $postDispatch !== null ){
          //Para requisições ajax
          //Ex: $.post("engine.php",{"class":'home','proc':'index'},function(data){});
          $globals->environment->ajaxRequest = true;
-         $class = $_POST['class'];
-         $proc  = ( isset($_POST['proc']) ? $_POST['proc'] : '');
+         list( $class, $proc ) = $postDispatch;
          $param = array();
 
       } else {
