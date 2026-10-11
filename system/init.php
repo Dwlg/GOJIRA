@@ -63,7 +63,9 @@
       //Configurações globais
       ini_set("default_socket_timeout", 60);
       if( PHP_SAPI !== 'cli' ) ob_start();
-      date_default_timezone_set('America/Sao_Paulo');
+      //Timezone do PHP e lc_time_names do banco: [<PROJECT_ID>_ENGINE] TIMEZONE e LC_TIME_NAMES
+      //(padrões America/Sao_Paulo e pt_BR)
+      $globals->cfg->applyLocale( PROJECT_ID . '_ENGINE' );
 
 
 
@@ -92,6 +94,9 @@
 
       //Verifica se tem os dados para conexão
       if( isset( $globals->database ) ){
+
+         //Charset da conexão (padrão 'utf8'; 'utf8mb4' para emoji e afins)
+         Connection::setCharset( isset( $globals->database->charset ) ? $globals->database->charset : null );
          
          $globals->connection = new Connection( $globals->database->host, $globals->database->user, $globals->database->password );
          

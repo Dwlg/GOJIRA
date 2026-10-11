@@ -17,6 +17,8 @@
          private $file;
          private $dirty = array();   //Chaves alteradas por este processo desde o último save()
 
+         const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
+
 
          function __construct1( $appRoot ){
             $this->file = $appRoot . 'app_configs.ini';
@@ -81,6 +83,32 @@
 			
 			
 			
+			//Aplica o timezone do PHP e o lc_time_names do banco a partir de uma seção
+			//(no init.php, PROJECT_ID . '_ENGINE'). Chaves TIMEZONE e LC_TIME_NAMES; ausentes,
+			//valem os padrões America/Sao_Paulo e pt_BR. Valor inválido gera E_USER_WARNING
+			//e cai no padrão. Não grava as chaves no arquivo.
+			function applyLocale( $class ){
+
+            $timezone = $this->getConfig( $class, 'TIMEZONE' );
+            if( empty( $timezone ) || ! is_string( $timezone ) ) $timezone = self::DEFAULT_TIMEZONE;
+
+            if( ! @date_default_timezone_set( $timezone ) ){
+               trigger_error( sprintf( "TIMEZONE '%s' inválido em [%s]; usando %s", $timezone, $class, self::DEFAULT_TIMEZONE ), E_USER_WARNING );
+               date_default_timezone_set( self::DEFAULT_TIMEZONE );
+            }
+
+            $lcTimeNames = $this->getConfig( $class, 'LC_TIME_NAMES' );
+            try{
+               Connection::setLcTimeNames( is_string( $lcTimeNames ) ? $lcTimeNames : null );
+            } catch( InvalidArgumentException $e ){
+               trigger_error( sprintf( "LC_TIME_NAMES inválido em [%s]; usando %s", $class, Connection::DEFAULT_LC_TIME_NAMES ), E_USER_WARNING );
+               Connection::setLcTimeNames( null );
+            }
+
+			}
+
+
+
 			//Cria a tabela na base de dados, se ainda não existir
 			function create(){
 				
