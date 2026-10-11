@@ -1,0 +1,13 @@
+{
+   "name": "soares289/gojira-tools-phpstan",
+   "description": "PHPStan isolado para a análise estática do GOJIRA. Não faz parte das dependências do framework.",
+   "type": "project",
+   "license": "OSL-3.0",
+   "require": {
+      "php": ">=8.1",
+      "phpstan/phpstan": "^2.0"
+   },
+   "config": {
+      "sort-packages": true
+   }
+}
