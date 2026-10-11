@@ -67,10 +67,15 @@ final class BootConfigTest extends TestCase
              . 'echo json_encode([ENVIRONMENT, DB_NAME, DB_HOST, DB_USER, DB_PWD, SMTP_HOST]);';
     }
 
-    public function testDemoConstantsKeepTheOldDefaultsWithoutEnvironment(): void
+    // ENVIRONMENT padrão do demo é 'PROD' desde o PR13/GLX-42: um deploy que
+    // esquece de definir ENVIRONMENT (ou o .env) fica com display_errors
+    // desligado e com a política de placeholder de credencial recusando o
+    // boot, em vez de só registrar no log (ver UPGRADE.md, seção 15). As
+    // demais constantes continuam com o mesmo fallback de sempre.
+    public function testDemoConstantsDefaultToProdWithoutEnvironment(): void
     {
         self::assertSame(
-            '["DEV","db_name","localhost","db_user","db_host",""]',
+            '["PROD","db_name","localhost","db_user","db_host",""]',
             $this->runPhp($this->constantsScript())
         );
     }
