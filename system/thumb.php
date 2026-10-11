@@ -2,50 +2,34 @@
 //COMO USAR:********************************************************************************************
 //EXEMPLO RESIZE:	thumb.php?img=fotos.jpg&m=400&t=resize  (m é o tamanho maximo de largura ou altura)
 //EXEMPLO CROP:   thumb.php?img=fotos.jpg&w=400&h=200&t=crop
+//A origem fica confinada à raiz do projeto; ver system/class/thumb.class.php.
 //******************************************************************************************************
 
+	//Erros nunca vão para a saída (corromperiam a imagem); avisos de deprecation vão para o log.
+	ini_set( 'display_errors', '0' );
+	error_reporting( E_USER_DEPRECATED );
 
-	error_reporting( 0 );
-	
-   //Retorna a extensão do arquivo
+	require_once( __DIR__ . '/class/thumb.class.php' );
+
+   //Retorna o mime da imagem, identificado pelo conteúdo (só JPEG, PNG e GIF)
    function file_type( $file  ){
-		
-      if( strpos( $file, '?' ) > 0 ){
-         $file = explode( '?' , $file );
-         $file = $file[0];
+
+      static $cache = array();
+
+      if( ! isset( $cache[ $file ] ) ){
+         $info           = Gojira_Thumb::detectType( $file );
+         $cache[ $file ] = $info['mime'];
       }
 
-		if( function_exists('mime_content_type')){
-
-		    $ret = mime_content_type( $file );
-         
-      } elseif( function_exists('finfo_file') ) {
-
-         $finfo = finfo_open(FILEINFO_MIME_TYPE);
-         $ret   = finfo_file($finfo, $filename);
-         finfo_close( $finfo );
-
-      } else {
-         
-         $ext = explode('.', $file);
-         $ext = strtolower( end( $ext ) );
-         switch( $ext ){
-            case 'jpg':  $ret = 'image/jpeg'; break;
-            case 'jpeg': $ret = 'image/jpeg'; break;
-            case 'gif':  $ret = 'image/gif'; break;
-            case 'png':  $ret = 'image/png'; break;
-         }
-
-      }
-		
-      return $ret;
+      return $cache[ $file ];
    }
    
    
    //Cria uma imagem a partir de um arquivo no disco
    function createImage( $filename ){
       
-      $type = file_type( $filename );
+      $type  = file_type( $filename );
+      $image = false;
       
       if( $type == 'image/jpeg' ){
          $image = imagecreatefromjpeg($filename);
@@ -70,7 +54,7 @@
 			
       } elseif( $type == 'image/gif' ){
          header('Content-type: image/gif');
-         imagegif($image_f, null, 80);
+         imagegif($image_f);
 			
       } elseif( $type == 'image/png' ){
          header('Content-type: image/png');
@@ -88,16 +72,16 @@
       //PARTE DE FILTROS
       if( !is_numeric( $f ) && $f != '' ){
          $tmp = get_defined_constants();
-         $f   = $tmp['IMG_FILTER_' . strtoupper($f)];
+         $f   = $tmp['IMG_FILTER_' . strtoupper($f)] ?? '';
       }
       //Se um filtro foi escolhido
       if( $f != '' ){
 
          $arr = array($image_f, $f);
-         if( isset( $_GET['fp1'] ) ) $arr[] = $_GET['fp1'];
-         if( isset( $_GET['fp2'] ) ) $arr[] = $_GET['fp2'];
-         if( isset( $_GET['fp3'] ) ) $arr[] = $_GET['fp3'];
-         if( isset( $_GET['fp4'] ) ) $arr[] = $_GET['fp4'];
+         if( isset( $_GET['fp1'] ) ) $arr[] = (int) $_GET['fp1'];
+         if( isset( $_GET['fp2'] ) ) $arr[] = (int) $_GET['fp2'];
+         if( isset( $_GET['fp3'] ) ) $arr[] = (int) $_GET['fp3'];
+         if( isset( $_GET['fp4'] ) ) $arr[] = (int) $_GET['fp4'];
 
          call_user_func_array( 'imagefilter', $arr );
 
@@ -151,6 +135,7 @@
 	function imagefilterhue($im,$r,$g,$b){
 		
 		$rgb = $r+$g+$b;
+		if( $rgb == 0 ) return;   //Preto não define matiz; mantém a imagem
 		$col = array($r/$rgb,$b/$rgb,$g/$rgb);
 		$height = imagesy($im);
 		$width = imagesx($im);
@@ -216,6 +201,16 @@
 			
       }
 
+      //Nenhum lado do resultado passa do limite
+      $limit = Gojira_Thumb::maxSize();
+      if( $new_width > $limit || $new_height > $limit ){
+         $scale      = $limit / max( $new_width, $new_height );
+         $new_width  = $new_width  * $scale;
+         $new_height = $new_height * $scale;
+      }
+      $new_width  = max( 1, (int) round( $new_width ) );
+      $new_height = max( 1, (int) round( $new_height ) );
+
       $image_p = imagecreatetruecolor($new_width, $new_height);
       
 		if($type == 'image/gif' or $type == 'image/png'){
@@ -252,6 +247,14 @@
 		
 		
     
+      //A imagem intermediária do crop também respeita o limite
+      $limit = Gojira_Thumb::maxSize();
+      if( $new_width > 2 * $limit || $new_height > 2 * $limit ){
+         throw new Gojira_Thumb_Exception( 'Proporção do crop acima do limite.', 400 );
+      }
+      $new_width  = max( 1, (int) round( $new_width ) );
+      $new_height = max( 1, (int) round( $new_height ) );
+
       // Resize
       $image_p = imagecreatetruecolor($new_width, $new_height);
       $image_f = imagecreatetruecolor($desired_width, $desired_height);
@@ -309,16 +312,51 @@
 }
 
 
-$img  = (isset($_GET['img']) ? $_GET['img'] : '');				//Nome da imagem
-$type = (isset($_GET['t'])   ? $_GET['t']   : '');		//Tipo     = crop ou resize
 $m    = (isset($_GET['m'])   ? $_GET['m']   : 0);				//MAX      = Tamanho max, usado no resize
 $w    = (isset($_GET['w'])   ? $_GET['w']   : 0);				//WIDTH    = Largura da imagem, obrigatorio no crop e opcional no resize
 $h    = (isset($_GET['h'])   ? $_GET['h']   : 0);				//HEIGHT   = Altura da imagem, obrigatorio no crop e opcional no resize
 $b    = (isset($_GET['b'])   ? $_GET['b']   : 0);				//BORDER   = Borda usada no crop, opcional
+$type = (isset($_GET['t'])   ? $_GET['t']   : '');		//Tipo     = crop ou resize
 $c    = (isset($_GET['c'])   ? $_GET['c']   : '');				//COLOR    = Cor usado no colorir
 $p    = (isset($_GET['p'])   ? $_GET['p']   : 'center');		//POSITION = Posição que o crop vai remover da imagem, opcional, padrao centro, opcoes: centro, bottomright, bottomleft, topright, topleft
 $f    = (isset($_GET['f'])   ? $_GET['f']   : '');				//Filtros - Ver pagina: http://php.net/manual/pt_BR/function.imagefilter.php
 $hue  = (isset($_GET['hue']) ? $_GET['hue'] : '');				//HUE - Saturacao = Recebe uma cor RGB em hex
+
+try{
+
+   $scriptDir = dirname( isset( $_SERVER['SCRIPT_FILENAME'] ) ? $_SERVER['SCRIPT_FILENAME'] : __FILE__ );
+   $max       = Gojira_Thumb::maxSize();
+
+   //Valida a origem, o formato e as dimensões antes de abrir qualquer imagem
+   $img  = Gojira_Thumb::resolveSource( isset( $_GET['img'] ) ? $_GET['img'] : '', Gojira_Thumb::root( $scriptDir ), $scriptDir, Gojira_Thumb::allowRemote() );
+   $info = Gojira_Thumb::detectType( $img );
+   $m    = Gojira_Thumb::dimension( $m, $max );
+   $w    = Gojira_Thumb::dimension( $w, $max );
+   $h    = Gojira_Thumb::dimension( $h, $max );
+   $b    = Gojira_Thumb::dimension( $b, $max );
+   $c    = Gojira_Thumb::hexColor( $c );
+   $hue  = Gojira_Thumb::hexColor( $hue );
+
+   if( $info['width'] < 1 || $info['height'] < 1 ){
+      throw new Gojira_Thumb_Exception( 'Imagem inválida.', 415 );
+   }
+
+   if( $type == 'resize' && $m == 0 && $w == 0 && $h == 0 ){
+      throw new Gojira_Thumb_Exception( 'Informe m, w ou h no resize.', 400 );
+   }
+
+   if( $type == 'crop' && ( $w == 0 || $h == 0 || 2 * $b >= min( $w, $h ) ) ){
+      throw new Gojira_Thumb_Exception( 'Informe w e h válidos no crop.', 400 );
+   }
+
+   //Sem t, a origem é servida inteira: cada lado respeita o mesmo limite do resize
+   if( $type != 'resize' && $type != 'crop' && ( $info['width'] > $max || $info['height'] > $max ) ){
+      throw new Gojira_Thumb_Exception( 'Imagem acima de ' . $max . ' px; use t=resize.', 400 );
+   }
+
+   if( ! function_exists( 'imagecreatetruecolor' ) ){
+      throw new Gojira_Thumb_Exception( 'Extensão GD indisponível.', 500 );
+   }
 
 //EXEMPLO RESIZE:	thumb.php?img=fotos.jpg&m=400&t=resize  (m é o tamanho maximo de largura ou altura)
 if( $type == "resize" ){
@@ -338,8 +376,20 @@ if( $type == "resize" ){
 }
 
 
+if( $c != '' || $hue != '' ){
+   Gojira_Thumb::checkEffectArea( imagesx( $image_f ), imagesy( $image_f ) );
+}
+
 setImageFilter( $image_f, $f, $hue);
 setImageColor( $image_f, $c );
 
 
 imageHeader( $img, $image_f );
+
+} catch( Gojira_Thumb_Exception $e ){
+
+   http_response_code( $e->getStatus() );
+   header( 'Content-Type: text/plain; charset=utf-8' );
+   echo $e->getMessage();
+   exit;
+}
