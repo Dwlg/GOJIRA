@@ -157,3 +157,21 @@ jobs:
       - name: Derrubar o demo
         if: always()
         run: docker compose -f project_demo/docker-compose.yml down -v
+
+  phpstan:
+    name: phpstan (PHP 8.4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mysqli
+          coverage: none
+          tools: composer:v2
+      - name: Instalar PHPStan (tools/phpstan)
+        run: composer install -d tools/phpstan --no-interaction --no-progress --prefer-dist
+      - name: Instalar PHPUnit (tools/phpunit, usado pela análise dos testes)
+        run: composer install -d tools/phpunit --no-interaction --no-progress --prefer-dist
+      - name: Análise estática (nível 1, com baseline)
+        run: tools/phpstan/vendor/bin/phpstan analyse -c tools/phpstan/phpstan.neon.dist --no-progress
