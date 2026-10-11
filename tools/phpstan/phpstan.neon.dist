@@ -1,0 +1,17 @@
+includes:
+    - phpstan-baseline.neon
+
+parameters:
+    level: 1
+    paths:
+        - ../../system/class
+        - ../../system/inc
+        - ../../tests
+    bootstrapFiles:
+        - ../../system/vendor/autoload.php
+        - ../phpunit/vendor/autoload.php
+    scanFiles:
+        # AppController e AppModel: declarados condicionalmente pelo init.php
+        # (fora do escopo analisado) quando o projeto não define os seus.
+        - ../../system/init.php
+    tmpDir: ../../tools/phpstan/.cache
