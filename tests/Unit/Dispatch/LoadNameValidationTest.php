@@ -262,4 +262,23 @@ final class LoadNameValidationTest extends TestCase
         self::assertFalse(\GojiraCore::confinedFile($dir, ''));
         self::assertFalse(\GojiraCore::confinedFile(self::$root . '/missing-dir/', 'loadprobe.php'));
     }
+
+    public function testConfinedFileAlwaysJoinsWithASeparator(): void
+    {
+        $dir      = self::$root . '/app/controller';
+        $expected = realpath($dir . '/loadprobe.php');
+
+        // Sem barra final em $dir, com barra no início de $file, com barras repetidas.
+        self::assertSame($expected, \GojiraCore::confinedFile($dir, 'loadprobe.php'));
+        self::assertSame($expected, \GojiraCore::confinedFile($dir . '/', 'loadprobe.php'));
+        self::assertSame($expected, \GojiraCore::confinedFile($dir . '//', '/loadprobe.php'));
+
+        // Sem o separador, "controller" + "x.php" viraria um irmão do diretório.
+        file_put_contents(self::$root . '/app/controllersibling.php', '<?php');
+        try {
+            self::assertFalse(\GojiraCore::confinedFile($dir, 'sibling.php'));
+        } finally {
+            unlink(self::$root . '/app/controllersibling.php');
+        }
+    }
 }

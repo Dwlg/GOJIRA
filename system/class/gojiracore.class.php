@@ -108,12 +108,16 @@
 		}
 
 
-		//Resolve $dir . $file e devolve o caminho real somente se o arquivo existir
+		//Resolve $dir/$file e devolve o caminho real somente se o arquivo existir
 		//dentro de $dir (links simbólicos para fora do diretório são recusados).
-		//Devolve false caso contrário.
+		//Devolve false caso contrário. Há sempre um único separador entre $dir e
+		//$file, com ou sem barra final em $dir.
 		public static function confinedFile( $dir, $file ){
+			$dir  = (string) $dir;
+			$path = ( $dir === '' ? '' : rtrim( $dir, '/\\' ) . '/' ) . ltrim( (string) $file, '/\\' );
+
 			$base = realpath( $dir );
-			$real = realpath( $dir . $file );
+			$real = realpath( $path );
 
 			if( $base === false || $real === false || !is_file( $real ) ){
 				return false;

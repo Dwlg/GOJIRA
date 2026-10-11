@@ -99,21 +99,12 @@
             $ret           = '';
             $objController = Controller::Load( $class, $globals );
 
-            //Só considera o método se ele existir E for público. method_exists() sozinho
-            //enxerga métodos protected/private, permitindo executar via URL lógica que o
-            //controller nunca pretendeu expor.
-            //Tratamos "existe mas não é público" igual a "não existe" (not_found/0x1011),
-            //para não vazar quais métodos protegidos existem.
-            $methodPublic = false;
-            if( method_exists( $objController, $method ) ){
-               try{
-                  $methodPublic = (new ReflectionMethod( $objController, $method ))->isPublic();
-               } catch( ReflectionException $e ){
-                  $methodPublic = false;
-               }
-            }
+            //Só despacha método que o controller do projeto expõe de propósito
+            //(ver isDispatchable()). Método inexistente, não público ou de framework
+            //cai no mesmo caminho (not_found/0x1011), para não revelar o que existe.
+            $dispatchable = Controller::isDispatchable( $objController, $method );
 
-            if( $methodPublic ){
+            if( $dispatchable ){
 
                //Controle de acesso deny-by-default (opt-in - ver setAccessPolicy()).
                $policy = Controller::getAccessPolicy();
@@ -156,6 +147,75 @@
          }
          
          
+         //Diz se $method pode ser executado pela URL (ou pelo POST) em $objController.
+         //Regra: o método precisa ser
+         //  - público e não estático;
+         //  - sem o prefixo "__" (construtores, mágicos e os __constructN do GojiraCore);
+         //  - declarado numa subclasse de Controller (o controller do projeto ou o
+         //    AppController do projeto), e não em Controller ou GojiraCore;
+         //  - com nome que não exista em Controller/GojiraCore. Assim um gancho do
+         //    framework (onLoad, beforeCall...) continua fora do despacho mesmo quando
+         //    o projeto o sobrescreve no próprio controller;
+         //  - que não seja um dos tratadores not_found/unauthorized.
+         //Atenção: todo método público do AppController do projeto vira action em
+         //todos os controllers. Métodos auxiliares (inclusive set_*/get_*) devem
+         //ser protected.
+         //Os nomes de método do PHP não diferenciam maiúsculas, então a comparação
+         //também não diferencia (ONLOAD, __Construct etc. são recusados).
+         protected static function isDispatchable( $objController, $method ){
+
+            if( !is_string( $method ) || $method === '' || strncmp( $method, '__', 2 ) === 0 ){
+               return false;
+            }
+
+            if( !method_exists( $objController, $method ) || method_exists( 'Controller', $method ) ){
+               return false;
+            }
+
+            //not_found e unauthorized são tratadores chamados pelo próprio Call,
+            //não actions: /x/not_found não os executa diretamente.
+            if( in_array( strtolower( $method ), array( 'not_found', 'unauthorized' ), true ) ){
+               return false;
+            }
+
+            try{
+               $ref = new ReflectionMethod( $objController, $method );
+            } catch( ReflectionException $e ){
+               return false;
+            }
+
+            return $ref->isPublic()
+               && !$ref->isStatic()
+               && $ref->getDeclaringClass()->isSubclassOf( 'Controller' );
+         }
+
+
+         //Despacho legado por $_POST['class'] / $_POST['proc'] (usado pelo init.php).
+         //Devolve [class, proc] quando o POST pede o despacho, ou null quando não pede
+         //ou quando o projeto define GOJIRA_DISABLE_POST_DISPATCH (aí o despacho segue
+         //pela URL). O uso emite um E_USER_DEPRECATED por requisição.
+         //$disabled só existe para os testes; null lê a constante.
+         static function postDispatch( $post, $disabled = null ){
+
+            static $warned = false;
+
+            if( $disabled === null ){
+               $disabled = defined( 'GOJIRA_DISABLE_POST_DISPATCH' ) && GOJIRA_DISABLE_POST_DISPATCH;
+            }
+
+            if( $disabled || !is_array( $post ) || !isset( $post['class'] ) ){
+               return null;
+            }
+
+            if( !$warned ){
+               $warned = true;
+               trigger_error( 'GOJIRA: o despacho por $_POST[\'class\'] está obsoleto. Use a URL (controller/metodo) e defina GOJIRA_DISABLE_POST_DISPATCH para desligá-lo.', E_USER_DEPRECATED );
+            }
+
+            return array( $post['class'], ( isset( $post['proc'] ) ? $post['proc'] : '' ) );
+         }
+
+
          //Verifica se um controller existe
          static function Exists( $class ){
             

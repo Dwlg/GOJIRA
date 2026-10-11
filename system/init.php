@@ -162,12 +162,14 @@
 
       
       //Cria os parametos de inicialização das classes
-      if( isset( $_POST['class'] ) ){
+      //Despacho legado por POST (obsoleto, emite E_USER_DEPRECATED). Com
+      //GOJIRA_DISABLE_POST_DISPATCH definida, class/proc do POST são ignorados.
+      $postDispatch = Controller::postDispatch( $_POST );
+      if( $postDispatch !== null ){
          //Para requisições ajax
          //Ex: $.post("engine.php",{"class":'home','proc':'index'},function(data){});
          $globals->environment->ajaxRequest = true;
-         $class = $_POST['class'];
-         $proc  = ( isset($_POST['proc']) ? $_POST['proc'] : '');
+         list( $class, $proc ) = $postDispatch;
          $param = array();
 
       } else {
