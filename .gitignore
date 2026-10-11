@@ -1,2 +1,8 @@
 dist/
 dist/*
+
+# Configuração local: gerada em execução ou com credenciais. Nunca versionar.
+app_configs.ini
+.env
+.env.*
+!.env.example
