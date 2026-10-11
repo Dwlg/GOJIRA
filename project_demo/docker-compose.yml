@@ -1,0 +1,46 @@
+# Demo funcional do project_demo: PHP/Apache + MySQL. Usado para validar
+# manualmente e pelo smoke test da CI (.github/workflows/ci.yml).
+#
+#   docker compose -f project_demo/docker-compose.yml up -d --build
+#   curl http://localhost:8080/                  # vhost "raiz" (DocumentRoot = project_demo)
+#   curl http://localhost:8081/project_demo/      # vhost "subpasta" (DocumentRoot = raiz do repo)
+#
+#   docker compose -f project_demo/docker-compose.yml down -v
+
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: gojira_demo
+      MYSQL_USER: demo_user
+      MYSQL_PASSWORD: demo_pass
+    volumes:
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  app:
+    build:
+      context: ..
+      dockerfile: project_demo/docker/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: PROD
+      DB_HOST: db
+      DB_NAME: gojira_demo
+      DB_USER: demo_user
+      DB_PWD: demo_pass
+      # Sem isto, BASE_URL detectado em PROD recusaria o boot (Gojira_Host).
+      # "localhost" cobre as duas portas publicadas (a porta não entra na comparação).
+      GOJIRA_TRUSTED_HOSTS: localhost
+    ports:
+      - "8080:80"
+      - "8081:8080"

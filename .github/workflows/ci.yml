@@ -97,3 +97,63 @@ jobs:
         run: composer install -d tools/phpunit --no-interaction --no-progress --prefer-dist
       - name: Suíte integration
         run: tools/phpunit/vendor/bin/phpunit --testsuite integration
+
+  demo-smoke:
+    name: project_demo (smoke HTTP)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Subir o demo (PHP/Apache + MySQL)
+        run: docker compose -f project_demo/docker-compose.yml up -d --build
+
+      - name: Esperar a home responder
+        run: |
+          for i in $(seq 1 40); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/ || echo 000)
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 3
+          done
+          echo "Timeout esperando http://localhost:8080/ responder 200"
+          docker compose -f project_demo/docker-compose.yml logs
+          exit 1
+
+      - name: Página inicial carrega (vhost raiz, DocumentRoot = project_demo)
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/)
+          test "$code" = "200" || { echo "esperado 200, recebido $code"; exit 1; }
+
+      - name: Página inicial carrega sem RewriteBase fixo (vhost subpasta, /project_demo/)
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8081/project_demo/)
+          test "$code" = "200" || { echo "esperado 200, recebido $code"; exit 1; }
+
+      - name: Rota de erro dá 404 sanitizado (controller inexistente)
+        run: |
+          code=$(curl -s -o /tmp/body.html -w '%{http_code}' http://localhost:8080/rota-inexistente-glx42/nada)
+          test "$code" = "404" || { echo "esperado 404, recebido $code"; cat /tmp/body.html; exit 1; }
+          # Sem caminho de arquivo nem SQL na resposta (nunca <?php, /var/www, informa_schema).
+          ! grep -qiE '/var/www|information_schema|<\?php' /tmp/body.html || { echo "corpo do 404 vazou detalhe interno"; cat /tmp/body.html; exit 1; }
+
+      - name: .env continua bloqueado
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/.env)
+          test "$code" != "200" || { echo "esperado diferente de 200, recebido $code"; exit 1; }
+
+      - name: system/*.php continua bloqueado
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/system/init.php)
+          test "$code" != "200" || { echo "esperado diferente de 200, recebido $code"; exit 1; }
+
+      - name: vendor/ continua bloqueado
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/vendor/autoload.php)
+          test "$code" != "200" || { echo "esperado diferente de 200, recebido $code"; exit 1; }
+
+      - name: Logs do demo (sempre, para depuração)
+        if: always()
+        run: docker compose -f project_demo/docker-compose.yml logs
+
+      - name: Derrubar o demo
+        if: always()
+        run: docker compose -f project_demo/docker-compose.yml down -v
